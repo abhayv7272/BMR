@@ -1,0 +1,30 @@
+name: Roz Shaam 6 Baje Report
+
+on:
+  schedule:
+    # 6 PM IST = 12:30 PM UTC (GitHub UTC time use karta hai)
+    - cron: '30 12 * * *'
+  # Ye button "abhi chalao" ka option dega (testing ke liye)
+  workflow_dispatch:
+
+jobs:
+  run-report:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Code lao
+        uses: actions/checkout@v4
+
+      - name: Python setup karo
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Library install karo
+        run: pip install -r requirements.txt
+
+      - name: Report banao aur email bhejo
+        env:
+          MY_EMAIL: ${{ secrets.MY_EMAIL }}
+          MY_APP_PASSWORD: ${{ secrets.MY_APP_PASSWORD }}
+        run: python main.py
