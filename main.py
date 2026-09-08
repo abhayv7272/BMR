@@ -12,8 +12,11 @@ UNIVERSE = os.environ.get("BMR_UNIVERSE", "top1000")
 PORTFOLIO_CAPITAL = 20000
 RISK_PER_TRADE_PCT = 1.0
 
-TARGET_1_GAIN_PCT = 0.03
+TARGET_1_GAIN_PCT = 0.02  # V6 (backtest): book T1 fast
 MAX_HOLDING_DAYS = 25
+T2_MULT = 1.06  # V6 (backtest): realistic T2 at +6%
+TRACK_DAYS = 25  # purane signals ko itne din track karo
+EXIT_ALERT_DAYS = 3  # itne din ke andar exit hua to EXIT alert
 BENCHMARK_TICKER = "^NSEI"
 ENFORCE_NIFTY_REGIME = False
 
@@ -22,6 +25,9 @@ print(f"    - Target Universe    : NSE {UNIVERSE.upper()}")
 print(f"    - Portfolio Capital  : ₹{PORTFOLIO_CAPITAL:,.2f}")
 print(f"    - Risk per Trade     : {RISK_PER_TRADE_PCT}% (₹{PORTFOLIO_CAPITAL * (RISK_PER_TRADE_PCT / 100):,.2f})")
 print(f"    - Target 1 Gain      : +{TARGET_1_GAIN_PCT*100:.1f}% (50% profit lock + move SL to Cost+0.5%)")
+print(f"    - Target 2 Gain      : +{(T2_MULT-1)*100:.0f}% (runner exit)")
+print(f"    - Position Tracker   : last {TRACK_DAYS} days signals, exit alert {EXIT_ALERT_DAYS} days")
+print(f"    - M4 Exit Plans        : score 0-2 FULL-T1 / score 3-4 FULL-RIDE")
 print(f"    - Max Holding Window : {MAX_HOLDING_DAYS} Trading Days (~1 - 1.5 months)")
 print(f"    - Enforce Nifty Bull : {ENFORCE_NIFTY_REGIME}")
 
@@ -146,6 +152,82 @@ def yf_download_retry(*args, **kwargs):
 import yfinance as yf
 import math
 
+
+def simulate_exits(o, h, l, c, entry_idx, last_idx, entry, sl, t1, t2, plan='PARTIAL'):
+    """Forward-simulate exits. FULL_T1 = all at T1. FULL_RIDE = trail at T1, all at T2. PARTIAL = 50/50. Returns (legs, t1_touched)."""
+    legs = []
+    rem = 1.0
+    cur_sl = sl
+    t1_done = False
+    t1_touched = False
+    end_cap = min(last_idx, entry_idx + MAX_HOLDING_DAYS - 1)
+    for j in range(entry_idx, end_cap + 1):
+        oj, hj, lj = float(o[j]), float(h[j]), float(l[j])
+        if oj <= cur_sl:
+            legs.append((j, oj, rem, 'SL-GAP')); rem = 0.0; break
+        if lj <= cur_sl:
+            legs.append((j, cur_sl, rem, 'SL')); rem = 0.0; break
+        if (not t1_done) and hj >= t1:
+            t1_touched = True
+            if plan == 'FULL_T1':
+                legs.append((j, t1, rem, 'T1-FULL')); rem = 0.0; break
+            if plan == 'FULL_RIDE':
+                cur_sl = round(entry * 1.005, 2); t1_done = True
+                continue
+            legs.append((j, t1, 0.5, 'T1')); rem = 0.5
+            cur_sl = round(entry * 1.005, 2); t1_done = True
+            continue
+        if hj >= t2:
+            legs.append((j, t2, rem, 'T2')); rem = 0.0; break
+    if rem > 0:
+        if end_cap < last_idx:
+            legs.append((end_cap, float(c[end_cap]), rem, 'TIME'))
+        else:
+            legs.append((last_idx, None, rem, 'OPEN'))
+    return legs, t1_touched
+
+
+def tracker_status(legs, entry, cmp_now, entry_idx, dates, plan='PARTIAL', t1_touched=False):
+    closed = [x for x in legs if x[3] != 'OPEN']
+    open_frac = sum(x[2] for x in legs if x[3] == 'OPEN')
+    realised = sum(((x[1] - entry) / entry) * x[2] * 100.0 for x in closed)
+    reasons = [x[3] for x in closed]
+    is_open = open_frac > 0
+    live = realised + (open_frac * (cmp_now - entry) / entry * 100.0 if is_open else 0.0)
+    today = dates[-1].date()
+    entry_date = dates[entry_idx].date()
+    if is_open:
+        exit_date, exit_reason, fresh = '', 'OPEN', False
+        days_held = (today - entry_date).days
+        if plan == 'FULL_RIDE' and t1_touched:
+            status, action = "OPEN (Trailed)", "Kuch mat becho - SL cost par hai, T2 tak RIDE karo"
+        elif plan == 'FULL_RIDE':
+            status, action = "OPEN", "Hold karo - bechna kuch nahi, T1 trail / T2 ka wait karo"
+        elif live <= -1.0:
+            status, action = "OPEN", "Hold karo - T1 par POORA exit karna hai, SL paas hai nazar rakho"
+        else:
+            status, action = "OPEN", "Hold karo - T1 par POORA exit karna hai"
+    else:
+        eb = closed[-1][0]
+        exit_date = dates[eb].strftime('%d-%b-%Y')
+        exit_reason = '+'.join(reasons)
+        fresh = (today - dates[eb].date()).days <= EXIT_ALERT_DAYS
+        days_held = (dates[eb].date() - entry_date).days
+        if 'T2' in reasons:
+            status, action = "T2 DONE", "EXIT karo - Target 2 hit! Poora profit book karo"
+        elif 'T1-FULL' in reasons:
+            status, action = "T1 FULL EXIT", "EXIT - T1 par poora book. Plan ke hisaab se closed"
+        elif reasons == ['TIME'] or reasons == ['T1', 'TIME']:
+            status, action = "TIME UP", "25 din pure - CMP par exit karo"
+        elif 'T1' in reasons:
+            status, action = "T1+SL", "T1 profit bank, runner SL par nikla - closed"
+        else:
+            status, action = "SL HIT", "EXIT karo - Stop Loss hit. Discipline se niklo"
+    return {'live_pnl_pct': round(live, 2), 'status': status, 'action': action,
+            'is_open': is_open, 'fresh_exit': fresh, 'exit_date': exit_date,
+            'exit_reason': exit_reason, 'days_held': days_held}
+
+
 def run_screener(universe_df, capital=500000, risk_pct=1.0):
     print(f"[*] Fetching benchmark data ({BENCHMARK_TICKER})...")
     nifty = yf_download_retry(BENCHMARK_TICKER, period="1y", progress=False)
@@ -154,6 +236,17 @@ def run_screener(universe_df, capital=500000, risk_pct=1.0):
     regime = calculate_benchmark_regime(nifty)
 
     regime_desc = "BULL MARKET (Safe to Swing Trade)" if regime['is_bull_market'] else "CORRECTION (Caution Recommended)"
+    _nc = nifty['Close']
+    nifty_mom_map = {}
+    for _k in range(30, len(_nc)):
+        _dd = nifty.index[_k]
+        _dd = _dd.date() if hasattr(_dd, "date") else _dd
+        nifty_mom_map[_dd] = float((_nc.iloc[_k] - _nc.iloc[_k-30]) / _nc.iloc[_k-30])
+    def _nifty_mom_on(_d):
+        if _d in nifty_mom_map:
+            return nifty_mom_map[_d]
+        _past = [x for x in nifty_mom_map.keys() if x <= _d]
+        return nifty_mom_map[max(_past)] if _past else regime['nifty_30d_return']
     print(f"[+] NIFTY 50 CMP: ₹{regime['cmp']:,.2f} | 200 EMA: ₹{regime['ema200']:,.2f}")
     print(f"[+] Market Regime: {regime_desc}\n")
 
@@ -268,7 +361,7 @@ def run_screener(universe_df, capital=500000, risk_pct=1.0):
                                 # Noise Buffer & Loose Stop Filter (1.2% <= risk <= 8.0%)
                                 if 1.2 <= trade_risk_pct <= 8.0:
                                     target_1 = round(entry_price * (1.0 + TARGET_1_GAIN_PCT), 2)
-                                    target_2 = round(max(bb_up[i], entry_price * 1.10), 2)
+                                    target_2 = round(max(bb_up[i], entry_price * T2_MULT), 2)
 
                                     t1_gain = round(target_1 - entry_price, 2)
                                     t2_gain = round(target_2 - entry_price, 2)
@@ -288,6 +381,13 @@ def run_screener(universe_df, capital=500000, risk_pct=1.0):
                                     if bb_low_slope[i] > 0: score += 1
 
                                     rank = "A+" if score >= 4 else ("A" if score >= 2 else "A-")
+                                    g_score = 0
+                                    if (not np.isnan(ret30[i])) and ret30[i] > regime['nifty_30d_return'] + 0.03: g_score += 1
+                                    if rsi[i] < 55: g_score += 1
+                                    if hist[i] > 0: g_score += 1
+                                    if vol[i] > vol_sma[i]: g_score += 1
+                                    guidance = "RIDE" if g_score >= 3 else "BOOK-FAST"
+                                    plan = "FULL_RIDE" if g_score >= 3 else "FULL_T1"
                                     actionable_signals.append({
                                         'rank': rank,
                                         'symbol': meta['symbol'],
@@ -306,7 +406,11 @@ def run_screener(universe_df, capital=500000, risk_pct=1.0):
                                         'total_investment': total_investment,
                                         'max_holding_days': MAX_HOLDING_DAYS,
                                         'rsi': round(float(rsi[i]), 1),
-                                        'macd_hist': round(float(hist[i]), 2)
+                                        'macd_hist': round(float(hist[i]), 2),
+                                        'guidance': guidance,
+                                        'g_score': g_score,
+                                        'plan': plan,
+                                        'tier': ('ULTRA' if g_score >= 2 else 'STANDARD')
                                     })
                                     continue
 
@@ -327,8 +431,8 @@ def run_screener(universe_df, capital=500000, risk_pct=1.0):
                             'trigger_condition': "Consolidating at Lower BB Support; Watch for green hook"
                         })
 
-                # --- 3. RECENT SIGNALS EVALUATION (LAST 5 DAYS) ---
-                for offset in range(1, 6):
+                # --- 3. POSITION TRACKER (signals from last TRACK_DAYS, simulated to today) ---
+                for offset in range(1, TRACK_DAYS + 1):
                     p_i = i - offset
                     if p_i < 100: continue
                     if not (c[p_i] > ema200[p_i] and ema50[p_i] > ema200[p_i]): continue
@@ -338,16 +442,26 @@ def run_screener(universe_df, capital=500000, risk_pct=1.0):
                     if not (hist[p_i] > hist[p_i-1]): continue
                     if not (c[p_i] > bb_low[p_i] and c[p_i] > o[p_i]): continue
 
-                    e_price = c[p_i]
+                    sig_close = c[p_i]
                     p_sl = round(min(l[p_i-2], l[p_i-1], l[p_i]) - (1.3 * atr[p_i]), 2)
-                    p_risk = e_price - p_sl
-                    if p_risk <= 0 or not (0.012 <= (p_risk / e_price) <= 0.08): continue
+                    p_risk = sig_close - p_sl
+                    if p_risk <= 0 or not (0.012 <= (p_risk / sig_close) <= 0.08): continue
 
+                    e_idx = p_i + 1
+                    if e_idx > i: continue
+                    e_price = float(o[e_idx])
+                    if e_price <= p_sl: continue
                     p_t1 = round(e_price * (1.0 + TARGET_1_GAIN_PCT), 2)
-                    p_t2 = round(max(bb_up[p_i], e_price * 1.10), 2)
-                    cur_pnl = round(((cmp - e_price) / e_price) * 100.0, 2)
-
-                    status = "IN ENTRY ZONE" if cur_pnl <= 1.5 else ("TARGET 1 HIT" if cmp >= p_t1 else "ACTIVE")
+                    p_t2 = round(max(float(bb_up[p_i]), e_price * T2_MULT), 2)
+                    _gs = 0
+                    _nm = _nifty_mom_on(dates[p_i].date())
+                    if (not np.isnan(ret30[p_i])) and ret30[p_i] > _nm + 0.03: _gs += 1
+                    if rsi[p_i] < 55: _gs += 1
+                    if hist[p_i] > 0: _gs += 1
+                    if vol[p_i] > vol_sma[p_i]: _gs += 1
+                    _tplan = 'FULL_RIDE' if _gs >= 3 else 'FULL_T1'
+                    legs, _touched = simulate_exits(o, h, l, c, e_idx, i, e_price, p_sl, p_t1, p_t2, plan=_tplan)
+                    tinfo = tracker_status(legs, e_price, float(c[i]), e_idx, dates, plan=_tplan, t1_touched=_touched)
                     recent_signals.append({
                         'symbol': meta['symbol'],
                         'name': meta['name'],
@@ -358,9 +472,19 @@ def run_screener(universe_df, capital=500000, risk_pct=1.0):
                         'stop_loss': p_sl,
                         'target_1': p_t1,
                         'target_2': p_t2,
-                        'cmp': cmp,
-                        'current_pnl_pct': cur_pnl,
-                        'status': status
+                        'cmp': float(c[i]),
+                        'live_pnl_pct': tinfo['live_pnl_pct'],
+                        'status': tinfo['status'],
+                        'action': tinfo['action'],
+                        'is_open': tinfo['is_open'],
+                        'fresh_exit': tinfo['fresh_exit'],
+                        'exit_date': tinfo['exit_date'],
+                        'exit_reason': tinfo['exit_reason'],
+                        'days_held': tinfo['days_held'],
+                        'guidance': ('RIDE' if _tplan == 'FULL_RIDE' else 'BOOK-FAST'),
+                        'plan': _tplan,
+                        'g_score': _gs,
+                        'tier': ('ULTRA' if _gs >= 2 else 'STANDARD'),
                     })
             except Exception:
                 continue
@@ -395,7 +519,11 @@ print(f"\n{'='*85}")
 print(f"  SCAN SUMMARY: {len(universe_df)} STOCKS SCANNED")
 print(f"  - Actionable Buy Signals (Ready for Entry): {len(actionable)}")
 print(f"  - Radar Watchlist (At Lower Band Support) : {len(watchlist)}")
-print(f"  - Recent Triggers (Past 5 Days)           : {len(recent)}")
+print(f"  - Tracked Signals (Past {TRACK_DAYS} Days)      : {len(recent)}")
+n_exit = sum(1 for t in recent if t.get("fresh_exit"))
+print(f"  - Fresh EXIT alerts (T2/SL hit)         : {n_exit}")
+n_open = sum(1 for t in recent if t.get("is_open"))
+print(f"  - Open tracked positions                : {n_open}")
 print(f"{'='*85}\n")
 
 if actionable:
@@ -455,13 +583,13 @@ def export_to_excel(results, regime_info, universe_label="NSE Top 1000"):
     ws1 = wb.active
     ws1.title = "Actionable Swing Signals"
     ws1.views.sheetView[0].showGridLines = True
-    ws1.merge_cells('A1:R1')
+    ws1.merge_cells('A1:T1')
     ws1['A1'] = "BMR TRINITY SWING SCREENER - DAILY ACTIONABLE ORDERS"
     ws1['A1'].font = font_title; ws1['A1'].fill = fill_navy; ws1['A1'].alignment = align_center
     ws1.row_dimensions[1].height = 36
 
     today_str = datetime.now().strftime("%d %b %Y, %I:%M %p")
-    ws1.merge_cells('A2:R2')
+    ws1.merge_cells('A2:T2')
     regime_txt = "BULLISH (Safe to Swing Trade)" if regime_info.get('is_bull_market') else "CORRECTION (Caution Recommended)"
     ws1['A2'] = f"Generated on: {today_str} | Universe: {universe_label} | Nifty 50 Status: {regime_txt} (CMP: ₹{regime_info.get('cmp', 0):,.2f})"
     ws1['A2'].font = font_subtitle; ws1['A2'].fill = fill_slate; ws1['A2'].alignment = align_center
@@ -472,7 +600,7 @@ def export_to_excel(results, regime_info, universe_label="NSE Top 1000"):
         "CMP / Entry (₹)", "Stop Loss (₹)", "Risk / Share (₹)", "Risk (%)",
         "Target 1 (₹)", "T1 Return (%)", "Target 2 (₹)", "T2 Return (%)",
         "Reward:Risk", "Suggested Qty", "Investment (₹)", "Max Holding",
-        "RSI (14)", "MACD Hist"
+        "RSI (14)", "MACD Hist", "Guidance", "Tier"
     ]
     for c_i, h in enumerate(headers_1, 1):
         cell = ws1.cell(row=4, column=c_i, value=h)
@@ -495,12 +623,12 @@ def export_to_excel(results, regime_info, universe_label="NSE Top 1000"):
                 sig['entry_price'], sig['stop_loss'], sig['risk_per_share'], sig['risk_pct'] / 100.0,
                 sig['target_1'], sig['t1_gain_pct'] / 100.0, sig['target_2'], sig['t2_gain_pct'] / 100.0,
                 sig['rr_ratio'], sig['suggested_shares'], sig['total_investment'],
-                f"{sig['max_holding_days']} Days", sig['rsi'], sig['macd_hist']
+                f"{sig['max_holding_days']} Days", sig['rsi'], sig['macd_hist'], ("RIDE" if sig['guidance']=="RIDE" else "BOOK-FAST"), ("ULTRA" if sig['tier']=="ULTRA" else "STANDARD")
             ]
             for col_i, val in enumerate(vals, 1):
                 cell = ws1.cell(row=r_idx, column=col_i, value=val)
                 cell.font = font_body; cell.border = thin_border; cell.fill = row_fill
-                if col_i in [1, 2, 16]: cell.alignment = align_center
+                if col_i in [1, 2, 16, 19, 20]: cell.alignment = align_center
                 elif col_i in [3, 4]: cell.alignment = align_left
                 else: cell.alignment = align_right
 
@@ -515,6 +643,13 @@ def export_to_excel(results, regime_info, universe_label="NSE Top 1000"):
                     elif col_i == 8: cell.font = font_red
                 elif col_i == 13: cell.number_format = '0.00'
                 elif col_i == 14: cell.number_format = '#,##0'
+                elif col_i == 19:
+                    cell.alignment = align_center
+                    if val == 'RIDE': cell.fill = fill_light_green; cell.font = font_green
+                    else: cell.fill = fill_amber_bg; cell.font = font_bold
+                elif col_i == 20:
+                    cell.alignment = align_center
+                    if val == 'ULTRA': cell.fill = fill_amber_bg; cell.font = font_bold
             ws1.row_dimensions[r_idx].height = 20
 
     # Sheet 2: Radar Watchlist
@@ -551,45 +686,52 @@ def export_to_excel(results, regime_info, universe_label="NSE Top 1000"):
             elif col_i == 6: cell.number_format = '0.0%'
         ws2.row_dimensions[r_idx].height = 20
 
-    # Sheet 3: Recent Signals
-    ws3 = wb.create_sheet(title="Recent Signals (Past 5 Days)")
+    # Sheet 3: Position Tracker (25-day, live simulation)
+    ws3 = wb.create_sheet(title="Position Tracker (25 Days)")
     ws3.views.sheetView[0].showGridLines = True
     ws3.merge_cells('A1:L1')
-    ws3['A1'] = "ACTIVE SIGNALS FROM PAST 5 SESSIONS (TRACKING & TRAILING STOP)"
+    ws3['A1'] = "POSITION TRACKER - OPEN HOLDINGS + EXIT ALERTS (AUTO-SIMULATED TO TODAY)"
     ws3['A1'].font = font_title; ws3['A1'].fill = fill_header_blue; ws3['A1'].alignment = align_center
     ws3.row_dimensions[1].height = 36
     ws3.merge_cells('A2:L2')
-    ws3['A2'] = "Monitor active swing trades. If CMP is within 1.5% of Entry, setup is still valid for entry. If Target 1 hit, trail stop to Cost."
+    ws3['A2'] = "T1 = book 50% + SL to Cost | T2 = full exit | SL = exit now | TIME = 25 days over, exit at CMP"
     ws3['A2'].font = font_subtitle; ws3['A2'].fill = fill_slate; ws3['A2'].alignment = align_center
     ws3.row_dimensions[2].height = 22
-    headers_3 = ["Trigger Date", "Days Ago", "NSE Ticker", "Company Name", "Industry", "Entry Price (₹)", "Stop Loss (₹)", "Target 1 (₹)", "Target 2 (₹)", "Current CMP (₹)", "Current P&L (%)", "Trade Status"]
+    headers_3 = ["Symbol", "Trigger Date", "Days Held", "Entry (Rs)", "SL (Rs)", "T1 (Rs)", "T2 (Rs)", "CMP (Rs)", "Live P&L (%)", "Status", "Tier", "Action"]
     for c_i, h in enumerate(headers_3, 1):
         cell = ws3.cell(row=4, column=c_i, value=h)
         cell.font = font_header; cell.fill = fill_slate; cell.alignment = align_center; cell.border = thin_border
     ws3.row_dimensions[4].height = 26
+    tr_open = sorted([t for t in recent if t.get('is_open')], key=lambda x: x['days_held'], reverse=True)
+    tr_closed = sorted([t for t in recent if not t.get('is_open')], key=lambda x: (not x.get('fresh_exit'), x['days_ago']))
     r_idx = 4
-    for idx, item in enumerate(recent[:40]):
+    for idx, item in enumerate((tr_open + tr_closed)[:50]):
         r_idx += 1
         row_fill = fill_zebra if (idx % 2 == 0) else PatternFill(fill_type=None)
-        row_vals = [
-            item['trigger_date'], item['days_ago'], item['symbol'], item['name'], item['industry'],
-            item['entry_price'], item['stop_loss'], item['target_1'], item['target_2'],
-            item['cmp'], item['current_pnl_pct'] / 100.0, item['status']
-        ]
+        row_vals = [item['symbol'], item['trigger_date'], item['days_held'], item['entry_price'], item['stop_loss'], item['target_1'], item['target_2'], item['cmp'], item['live_pnl_pct'] / 100.0, item['status'], ("ULTRA" if item.get('tier')=="ULTRA" else "STANDARD"), item['action']]
         for col_i, val in enumerate(row_vals, 1):
             cell = ws3.cell(row=r_idx, column=col_i, value=val)
             cell.font = font_body; cell.border = thin_border; cell.fill = row_fill
-            if col_i in [1, 2, 3, 12]: cell.alignment = align_center
-            elif col_i in [4, 5]: cell.alignment = align_left
+            if col_i in [1, 2, 3, 10, 11]: cell.alignment = align_center
+            elif col_i == 12: cell.alignment = align_left
             else: cell.alignment = align_right
-            if col_i in [6, 7, 8, 9, 10]: cell.number_format = '₹#,##0.00'
-            elif col_i == 11:
+            if col_i in [4, 5, 6, 7, 8]: cell.number_format = 'Rs#,##0.00'
+            elif col_i == 9:
                 cell.number_format = '+0.0%;-0.0%;0.0%'
-                cell.font = font_green if val > 0 else font_red
-            elif col_i == 12:
-                if "ENTRY ZONE" in val: cell.fill = fill_cyan_bg; cell.font = font_blue
-                elif "TARGET 1" in val: cell.fill = fill_light_green; cell.font = font_green
+                cell.font = font_green if val >= 0 else font_red
+            elif col_i == 10:
+                if "T2 DONE" in val or "T1 FULL" in val: cell.fill = fill_light_green; cell.font = font_green
+                elif "SL HIT" in val: cell.fill = fill_light_red; cell.font = font_red
+                elif "TIME UP" in val: cell.fill = fill_amber_bg; cell.font = font_bold
+                elif "OPEN" in val: cell.fill = fill_cyan_bg; cell.font = font_blue
+            elif col_i == 11:
+                cell.alignment = align_center
+                if val == 'ULTRA': cell.fill = fill_amber_bg; cell.font = font_bold
         ws3.row_dimensions[r_idx].height = 20
+    if r_idx == 4:
+        ws3.merge_cells('A5:L5')
+        ws3['A5'] = "No tracked signals in last 25 days."
+        ws3['A5'].font = font_bold; ws3['A5'].alignment = align_center
 
     # Sheet 4: Regime
     ws4 = wb.create_sheet(title="Market Regime & Breadth")
@@ -654,7 +796,7 @@ def export_to_excel(results, regime_info, universe_label="NSE Top 1000"):
 excel_file = export_to_excel(results, regime_info, universe_label=f"NSE {UNIVERSE.upper()}")
 print(f"✅ Excel report created successfully: {excel_file}")
 
-# ============ STUNNING HTML EMAIL REPORT ============
+# ============ STUNNING HTML EMAIL REPORT (v2: tracker + guidance) ============
 import json
 import smtplib
 from html import escape as _esc
@@ -670,7 +812,11 @@ def E(x):
 def build_html_report(results, regime_info, universe_label):
     actionable = results.get('actionable', [])
     watchlist = results.get('watchlist', [])
-    recent = results.get('recent', [])
+    tracked = results.get('recent', [])
+    fresh = [t for t in tracked if t.get('fresh_exit')]
+    openpos = [t for t in tracked if t.get('is_open')]
+    ultra = [s for s in actionable if s.get('tier') == 'ULTRA']
+    std = [s for s in actionable if s.get('tier') != 'ULTRA']
     date_str = datetime.now().strftime("%A, %d %B %Y")
 
     is_bull = regime_info.get('is_bull_market', False)
@@ -678,40 +824,55 @@ def build_html_report(results, regime_info, universe_label):
     regime_color = "#16C784" if is_bull else "#EA3943"
     regime_bg = "#0B2E23" if is_bull else "#3A1215"
 
-    # ---- Top pick spotlight ----
-    if actionable:
-        top = actionable[0]
-        t_chg = ""  # entry-based; show RR instead
-        spotlight = f"""
-    <div style="font-size:11px;letter-spacing:2px;color:#8A94A6;font-weight:bold;margin-bottom:10px;">⭐ TOP PICK OF THE DAY</div>
-    <table width="100%" cellpadding="0" cellspacing="0"><tr><td style="background-color:#151B29;border:1px solid #F0B90B;border-left:4px solid #F0B90B;border-radius:8px;padding:18px 20px;">
-      <table width="100%" cellpadding="0" cellspacing="0"><tr>
-        <td><div style="font-size:20px;font-weight:800;color:#FFFFFF;">{E(top['symbol'])} <span style="font-size:11px;color:#06281C;font-weight:800;background-color:#F0B90B;border-radius:4px;padding:2px 8px;">{E(top['rank'])}</span></div>
-        <div style="font-size:13px;color:#8A94A6;margin-top:2px;">{E(top['name'])}</div></td>
-        <td align="right"><div style="font-size:11px;color:#8A94A6;">ENTRY</div><div style="font-size:22px;font-weight:800;color:#FFFFFF;">₹{top['entry_price']:,.2f}</div></td>
-      </tr></table>
-      <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:14px;"><tr>
-        <td width="25%" style="text-align:center;border-right:1px solid #232C42;"><div style="font-size:10px;color:#8A94A6;letter-spacing:1px;">STOP LOSS</div><div style="font-size:15px;color:#EA3943;font-weight:800;margin-top:2px;">₹{top['stop_loss']:,.2f}</div></td>
-        <td width="25%" style="text-align:center;border-right:1px solid #232C42;"><div style="font-size:10px;color:#8A94A6;letter-spacing:1px;">TARGET 1</div><div style="font-size:15px;color:#16C784;font-weight:800;margin-top:2px;">₹{top['target_1']:,.2f}</div></td>
-        <td width="25%" style="text-align:center;border-right:1px solid #232C42;"><div style="font-size:10px;color:#8A94A6;letter-spacing:1px;">TARGET 2</div><div style="font-size:15px;color:#16C784;font-weight:800;margin-top:2px;">₹{top['target_2']:,.2f}</div></td>
-        <td width="25%" style="text-align:center;"><div style="font-size:10px;color:#8A94A6;letter-spacing:1px;">RISK:REWARD</div><div style="font-size:15px;color:#F0B90B;font-weight:800;margin-top:2px;">{top['rr_ratio']:.2f}</div></td>
-      </tr></table>
-      <div style="font-size:12px;color:#B0B8C8;margin-top:12px;line-height:1.6;">✓ Qty: <b style="color:#fff;">{top['suggested_shares']:,}</b> &nbsp;•&nbsp; Investment: <b style="color:#fff;">₹{top['total_investment']:,.0f}</b> &nbsp;•&nbsp; RSI: <b style="color:#fff;">{top['rsi']}</b> &nbsp;•&nbsp; Risk: <b style="color:#fff;">{top['risk_pct']:.1f}%</b></div>
-    </td></tr></table>"""
-    else:
-        spotlight = """
-    <div style="font-size:11px;letter-spacing:2px;color:#8A94A6;font-weight:bold;margin-bottom:10px;">⭐ TOP PICK OF THE DAY</div>
-    <table width="100%" cellpadding="0" cellspacing="0"><tr><td style="background-color:#151B29;border:1px solid #232C42;border-radius:8px;padding:18px 20px;text-align:center;">
-      <div style="font-size:15px;color:#B0B8C8;">🛡️ Aaj koi stock 7 strict rules pass nahi kar paya. Capital protection active — cash is a position!</div>
-      <div style="font-size:12px;color:#8A94A6;margin-top:6px;">Neeche Radar Watchlist check karo — kuch stocks setup bana rahe hain.</div>
-    </td></tr></table>"""
+    # ---- 1. EXIT ALERTS ----
+    ex_rows = ""
+    for t in fresh:
+        pnl_c = "#16C784" if t['live_pnl_pct'] >= 0 else "#EA3943"
+        if "T2 DONE" in t['status']:
+            badge = '<span style="font-size:11px;color:#06281C;font-weight:800;background-color:#16C784;border-radius:4px;padding:3px 8px;">EXIT: T2 HIT</span>'
+        elif "SL HIT" in t['status']:
+            badge = '<span style="font-size:11px;color:#fff;font-weight:800;background-color:#EA3943;border-radius:4px;padding:3px 8px;">EXIT: SL HIT</span>'
+        elif "T1 FULL" in t['status']:
+            badge = '<span style="font-size:11px;color:#06281C;font-weight:800;background-color:#16C784;border-radius:4px;padding:3px 8px;">EXIT: T1 FULL</span>'
+        elif "TIME UP" in t['status']:
+            badge = '<span style="font-size:11px;color:#3A2E00;font-weight:800;background-color:#F0B90B;border-radius:4px;padding:3px 8px;">EXIT: TIME UP</span>'
+        else:
+            badge = '<span style="font-size:11px;color:#06283D;font-weight:800;background-color:#38BDF8;border-radius:4px;padding:3px 8px;">EXIT</span>'
+        ex_rows += f"""<tr style="background-color:#141B2B;">
+      <td style="font-size:13px;color:#FFFFFF;font-weight:bold;padding:10px 6px 10px 12px;border-top:1px solid #232C42;">{('💎' if t.get('tier')=='ULTRA' else '📋')} {E(t['symbol'])}<div style="font-size:10px;color:#8A94A6;font-weight:normal;">{E(t['exit_date'])} • {t['days_held']}d held</div></td>
+      <td align="right" style="font-size:13px;color:#FFFFFF;padding:10px 6px;border-top:1px solid #232C42;">₹{t['entry_price']:,.2f}</td>
+      <td align="right" style="font-size:13px;color:{pnl_c};font-weight:bold;padding:10px 6px;border-top:1px solid #232C42;">{t['live_pnl_pct']:+.1f}%</td>
+      <td align="right" style="padding:10px 12px 10px 6px;border-top:1px solid #232C42;">{badge}</td>
+    </tr>
+    <tr><td colspan="4" style="font-size:11px;color:#F0B90B;padding:0 6px 10px 12px;">👉 {E(t['action'])}</td></tr>"""
+    if not ex_rows:
+        ex_rows = """<tr><td style="font-size:13px;color:#16C784;text-align:center;padding:14px;">👍 Koi fresh exit nahi — sab positions track par hain.</td></tr>"""
 
-    # ---- Actionable rows ----
+    # ---- 2. OPEN POSITIONS ----
+    op_rows = ""
+    for t in openpos[:15]:
+        pnl_c = "#16C784" if t['live_pnl_pct'] >= 0 else "#EA3943"
+        t1tag = "T1✅ " if "T1" in t['exit_reason'] else ""
+        op_rows += f"""<tr>
+      <td style="font-size:13px;color:#FFFFFF;font-weight:bold;padding:10px 6px 10px 12px;border-top:1px solid #232C42;">{('💎' if t.get('tier')=='ULTRA' else '📋')} {E(t['symbol'])}<div style="font-size:10px;color:#8A94A6;font-weight:normal;">{t1tag}{E(t['trigger_date'])} • {t['days_held']}d</div></td>
+      <td align="right" style="font-size:13px;color:#FFFFFF;padding:10px 6px;border-top:1px solid #232C42;">₹{t['entry_price']:,.2f}</td>
+      <td align="right" style="font-size:13px;color:#FFFFFF;padding:10px 6px;border-top:1px solid #232C42;">₹{t['cmp']:,.2f}</td>
+      <td align="right" style="font-size:13px;color:{pnl_c};font-weight:bold;padding:10px 6px;border-top:1px solid #232C42;">{t['live_pnl_pct']:+.1f}%</td>
+      <td style="font-size:11px;color:#B0B8C8;padding:10px 12px 10px 6px;border-top:1px solid #232C42;">{E(t['action'])}</td>
+    </tr>"""
+    if not op_rows:
+        op_rows = """<tr><td colspan="5" style="font-size:13px;color:#8A94A6;text-align:center;padding:14px;">Koi open tracked position nahi.</td></tr>"""
+
+    # ---- 3. NEW ACTIONABLE (with guidance) ----
     rank_bg = {'A+': '#16C784', 'A': '#38BDF8', 'A-': '#F0B90B'}
     act_rows = ""
-    for i, s in enumerate(actionable[:20]):
+    for i, s in enumerate(ultra[:20]):
         bg = ' style="background-color:#141B2B;"' if i % 2 == 1 else ''
         rb = rank_bg.get(s['rank'], '#F0B90B')
+        if s.get('guidance') == 'RIDE':
+            g = '<span style="font-size:11px;color:#06281C;font-weight:800;background-color:#16C784;border-radius:4px;padding:3px 8px;">🚀 FULL-RIDE</span>'
+        else:
+            g = '<span style="font-size:11px;color:#3A2E00;font-weight:800;background-color:#F0B90B;border-radius:4px;padding:3px 8px;">⚡ FULL-EXIT</span>'
         act_rows += f"""<tr{bg}>
       <td style="font-size:13px;color:#FFFFFF;font-weight:bold;padding:10px 6px 10px 12px;border-top:1px solid #232C42;">{E(s['symbol'])}<div style="font-size:10px;color:#8A94A6;font-weight:normal;">{E(s['industry'][:22])}</div></td>
       <td align="center" style="padding:10px 6px;border-top:1px solid #232C42;"><span style="font-size:11px;color:#06281C;font-weight:800;background-color:{rb};border-radius:4px;padding:3px 8px;">{E(s['rank'])}</span></td>
@@ -719,12 +880,30 @@ def build_html_report(results, regime_info, universe_label):
       <td align="right" style="font-size:13px;color:#EA3943;padding:10px 6px;border-top:1px solid #232C42;">₹{s['stop_loss']:,.2f}</td>
       <td align="right" style="font-size:13px;color:#16C784;padding:10px 6px;border-top:1px solid #232C42;">₹{s['target_1']:,.2f}</td>
       <td align="right" style="font-size:13px;color:#16C784;padding:10px 6px;border-top:1px solid #232C42;">₹{s['target_2']:,.2f}</td>
-      <td align="right" style="font-size:13px;color:#F0B90B;font-weight:bold;padding:10px 12px 10px 6px;border-top:1px solid #232C42;">{s['rr_ratio']:.2f}</td>
+      <td align="center" style="padding:10px 12px 10px 6px;border-top:1px solid #232C42;">{g}</td>
     </tr>"""
     if not act_rows:
-        act_rows = """<tr><td colspan="7" style="font-size:13px;color:#8A94A6;text-align:center;padding:16px;border-top:1px solid #232C42;">No actionable signals today — capital safe. 🛡️</td></tr>"""
+        act_rows = """<tr><td colspan="7" style="font-size:13px;color:#8A94A6;text-align:center;padding:16px;border-top:1px solid #232C42;">No 💎 ultra signals today.</td></tr>"""
 
-    # ---- Watchlist rows ----
+    # ---- 3b. STANDARD ACTIONABLE ----
+    std_rows = ""
+    for i, s in enumerate(std[:20]):
+        bg = ' style="background-color:#141B2B;"' if i % 2 == 1 else ''
+        rb = rank_bg.get(s['rank'], '#F0B90B')
+        g = '<span style="font-size:11px;color:#3A2E00;font-weight:800;background-color:#F0B90B;border-radius:4px;padding:3px 8px;">⚡ FULL-EXIT</span>'
+        std_rows += f"""<tr{bg}>
+      <td style="font-size:13px;color:#FFFFFF;font-weight:bold;padding:10px 6px 10px 12px;border-top:1px solid #232C42;">{E(s['symbol'])}<div style="font-size:10px;color:#8A94A6;font-weight:normal;">{E(s['industry'][:22])}</div></td>
+      <td align="center" style="padding:10px 6px;border-top:1px solid #232C42;"><span style="font-size:11px;color:#06281C;font-weight:800;background-color:{rb};border-radius:4px;padding:3px 8px;">{E(s['rank'])}</span></td>
+      <td align="right" style="font-size:13px;color:#FFFFFF;padding:10px 6px;border-top:1px solid #232C42;">₹{s['entry_price']:,.2f}</td>
+      <td align="right" style="font-size:13px;color:#EA3943;padding:10px 6px;border-top:1px solid #232C42;">₹{s['stop_loss']:,.2f}</td>
+      <td align="right" style="font-size:13px;color:#16C784;padding:10px 6px;border-top:1px solid #232C42;">₹{s['target_1']:,.2f}</td>
+      <td align="right" style="font-size:13px;color:#16C784;padding:10px 6px;border-top:1px solid #232C42;">₹{s['target_2']:,.2f}</td>
+      <td align="center" style="padding:10px 12px 10px 6px;border-top:1px solid #232C42;">{g}</td>
+    </tr>"""
+    if not std_rows:
+        std_rows = """<tr><td colspan="7" style="font-size:13px;color:#8A94A6;text-align:center;padding:16px;border-top:1px solid #232C42;">No standard signals today.</td></tr>"""
+
+    # ---- 4. RADAR ----
     wl_rows = ""
     for i, w in enumerate(watchlist[:12]):
         bg = ' style="background-color:#141B2B;"' if i % 2 == 1 else ''
@@ -739,27 +918,6 @@ def build_html_report(results, regime_info, universe_label):
     if not wl_rows:
         wl_rows = """<tr><td colspan="5" style="font-size:13px;color:#8A94A6;text-align:center;padding:16px;border-top:1px solid #232C42;">Radar clear — nothing near lower band today.</td></tr>"""
 
-    # ---- Recent rows ----
-    rc_rows = ""
-    for i, r in enumerate(recent[:10]):
-        bg = ' style="background-color:#141B2B;"' if i % 2 == 1 else ''
-        pnl_c = "#16C784" if r['current_pnl_pct'] >= 0 else "#EA3943"
-        if "ENTRY ZONE" in r['status']:
-            st = '<span style="font-size:11px;color:#06283D;font-weight:800;background-color:#38BDF8;border-radius:4px;padding:3px 8px;">ENTRY ZONE</span>'
-        elif "TARGET 1" in r['status']:
-            st = '<span style="font-size:11px;color:#06281C;font-weight:800;background-color:#16C784;border-radius:4px;padding:3px 8px;">T1 HIT</span>'
-        else:
-            st = '<span style="font-size:11px;color:#3A2E00;font-weight:800;background-color:#F0B90B;border-radius:4px;padding:3px 8px;">ACTIVE</span>'
-        rc_rows += f"""<tr{bg}>
-      <td style="font-size:13px;color:#FFFFFF;font-weight:bold;padding:10px 6px 10px 12px;border-top:1px solid #232C42;">{E(r['symbol'])}<div style="font-size:10px;color:#8A94A6;font-weight:normal;">{E(r['trigger_date'])}</div></td>
-      <td align="right" style="font-size:13px;color:#FFFFFF;padding:10px 6px;border-top:1px solid #232C42;">₹{r['entry_price']:,.2f}</td>
-      <td align="right" style="font-size:13px;color:#FFFFFF;padding:10px 6px;border-top:1px solid #232C42;">₹{r['cmp']:,.2f}</td>
-      <td align="right" style="font-size:13px;color:{pnl_c};font-weight:bold;padding:10px 6px;border-top:1px solid #232C42;">{r['current_pnl_pct']:+.1f}%</td>
-      <td align="right" style="padding:10px 12px 10px 6px;border-top:1px solid #232C42;">{st}</td>
-    </tr>"""
-    if not rc_rows:
-        rc_rows = """<tr><td colspan="5" style="font-size:13px;color:#8A94A6;text-align:center;padding:16px;border-top:1px solid #232C42;">No recent triggers in past 5 sessions.</td></tr>"""
-
     html = f"""<!DOCTYPE html><html><head><meta charset="utf-8"></head>
 <body style="margin:0;padding:0;background-color:#0B0E14;font-family:'Segoe UI',Arial,Helvetica,sans-serif;">
 <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#0B0E14;padding:24px 12px;"><tr><td align="center">
@@ -768,7 +926,7 @@ def build_html_report(results, regime_info, universe_label):
 <tr><td style="background-color:#111827;padding:28px 26px 20px 26px;border-left:1px solid #232C42;border-right:1px solid #232C42;">
   <div style="font-size:12px;letter-spacing:3px;color:#F0B90B;font-weight:bold;">● BMR TRINITY SWING SCREENER</div>
   <div style="font-size:28px;font-weight:800;color:#FFFFFF;margin:8px 0 4px 0;">Daily Action Report</div>
-  <div style="font-size:13px;color:#8A94A6;">{date_str} &nbsp;•&nbsp; {universe_label} &nbsp;•&nbsp; 6:00 PM IST</div>
+  <div style="font-size:13px;color:#8A94A6;">{date_str} &nbsp;•&nbsp; {E(universe_label)} &nbsp;•&nbsp; 6:00 PM IST</div>
   <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:16px;"><tr>
     <td width="32%" align="center" style="background-color:{regime_bg};border:1px solid {regime_color};border-radius:8px;padding:10px;">
       <div style="font-size:10px;color:#8A94A6;letter-spacing:1px;">NIFTY REGIME</div>
@@ -783,19 +941,42 @@ def build_html_report(results, regime_info, universe_label):
       <div style="font-size:14px;color:#FFFFFF;font-weight:800;margin-top:2px;">{regime_info.get('nifty_30d_return', 0)*100:+.2f}%</div></td>
   </tr></table>
   <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:10px;"><tr>
-    <td width="32%" align="center" style="background-color:#0B2E23;border:1px solid #16C784;border-radius:8px;padding:10px;">
-      <div style="font-size:20px;font-weight:800;color:#16C784;">{len(actionable)}</div><div style="font-size:10px;color:#8A94A6;letter-spacing:1px;">ACTIONABLE</div></td>
-    <td width="2%"></td>
-    <td width="32%" align="center" style="background-color:#2E230B;border:1px solid #F0B90B;border-radius:8px;padding:10px;">
+    <td width="24%" align="center" style="background-color:#3A1215;border:1px solid #EA3943;border-radius:8px;padding:10px;">
+      <div style="font-size:20px;font-weight:800;color:#EA3943;">{len(fresh)}</div><div style="font-size:10px;color:#8A94A6;letter-spacing:1px;">EXIT NOW</div></td>
+    <td width="1%"></td>
+    <td width="24%" align="center" style="background-color:#0B2440;border:1px solid #38BDF8;border-radius:8px;padding:10px;">
+      <div style="font-size:20px;font-weight:800;color:#38BDF8;">{len(openpos)}</div><div style="font-size:10px;color:#8A94A6;letter-spacing:1px;">OPEN</div></td>
+    <td width="1%"></td>
+    <td width="24%" align="center" style="background-color:#0B2E23;border:1px solid #16C784;border-radius:8px;padding:10px;">
+      <div style="font-size:20px;font-weight:800;color:#16C784;">{len(actionable)}</div><div style="font-size:10px;color:#8A94A6;letter-spacing:1px;">NEW</div></td>
+    <td width="1%"></td>
+    <td width="24%" align="center" style="background-color:#2E230B;border:1px solid #F0B90B;border-radius:8px;padding:10px;">
       <div style="font-size:20px;font-weight:800;color:#F0B90B;">{len(watchlist)}</div><div style="font-size:10px;color:#8A94A6;letter-spacing:1px;">RADAR</div></td>
-    <td width="2%"></td>
-    <td width="32%" align="center" style="background-color:#0B2440;border:1px solid #38BDF8;border-radius:8px;padding:10px;">
-      <div style="font-size:20px;font-weight:800;color:#38BDF8;">{len(recent)}</div><div style="font-size:10px;color:#8A94A6;letter-spacing:1px;">RECENT (5D)</div></td>
   </tr></table>
 </td></tr>
-<tr><td style="background-color:#111827;padding:0 26px 20px 26px;border-left:1px solid #232C42;border-right:1px solid #232C42;">{spotlight}</td></tr>
 <tr><td style="background-color:#111827;padding:0 26px 20px 26px;border-left:1px solid #232C42;border-right:1px solid #232C42;">
-  <div style="font-size:11px;letter-spacing:2px;color:#8A94A6;font-weight:bold;margin-bottom:10px;">🟢 ACTIONABLE ORDERS ({len(actionable)})</div>
+  <div style="font-size:11px;letter-spacing:2px;color:#EA3943;font-weight:bold;margin-bottom:10px;">🚨 EXIT ALERTS ({len(fresh)}) — TURANT ACTION LO</div>
+  <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #EA3943;border-radius:8px;">
+  <tr style="background-color:#1A2233;">
+    <td style="font-size:10px;color:#8A94A6;font-weight:bold;padding:10px 6px 10px 12px;">STOCK</td>
+    <td align="right" style="font-size:10px;color:#8A94A6;font-weight:bold;padding:10px 6px;">ENTRY</td>
+    <td align="right" style="font-size:10px;color:#8A94A6;font-weight:bold;padding:10px 6px;">P&amp;L</td>
+    <td align="right" style="font-size:10px;color:#8A94A6;font-weight:bold;padding:10px 12px 10px 6px;">SIGNAL</td>
+  </tr>{ex_rows}</table>
+</td></tr>
+<tr><td style="background-color:#111827;padding:0 26px 20px 26px;border-left:1px solid #232C42;border-right:1px solid #232C42;">
+  <div style="font-size:11px;letter-spacing:2px;color:#8A94A6;font-weight:bold;margin-bottom:10px;">📌 OPEN POSITIONS ({len(openpos)} SHOWN {min(len(openpos), 15)})</div>
+  <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #232C42;border-radius:8px;">
+  <tr style="background-color:#1A2233;">
+    <td style="font-size:10px;color:#8A94A6;font-weight:bold;padding:10px 6px 10px 12px;">STOCK</td>
+    <td align="right" style="font-size:10px;color:#8A94A6;font-weight:bold;padding:10px 6px;">ENTRY</td>
+    <td align="right" style="font-size:10px;color:#8A94A6;font-weight:bold;padding:10px 6px;">CMP</td>
+    <td align="right" style="font-size:10px;color:#8A94A6;font-weight:bold;padding:10px 6px;">P&amp;L</td>
+    <td style="font-size:10px;color:#8A94A6;font-weight:bold;padding:10px 12px 10px 6px;">GUIDANCE</td>
+  </tr>{op_rows}</table>
+</td></tr>
+<tr><td style="background-color:#111827;padding:0 26px 20px 26px;border-left:1px solid #232C42;border-right:1px solid #232C42;">
+  <div style="font-size:11px;letter-spacing:2px;color:#8A94A6;font-weight:bold;margin-bottom:10px;">💎 ULTRA QUALITY ({len(ultra)}) — Backtest: 83% WR • PF 1.6 — best signals, normal size</div>
   <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #232C42;border-radius:8px;">
   <tr style="background-color:#1A2233;">
     <td style="font-size:10px;color:#8A94A6;font-weight:bold;padding:10px 6px 10px 12px;">STOCK</td>
@@ -804,8 +985,21 @@ def build_html_report(results, regime_info, universe_label):
     <td align="right" style="font-size:10px;color:#8A94A6;font-weight:bold;padding:10px 6px;">SL</td>
     <td align="right" style="font-size:10px;color:#8A94A6;font-weight:bold;padding:10px 6px;">T1</td>
     <td align="right" style="font-size:10px;color:#8A94A6;font-weight:bold;padding:10px 6px;">T2</td>
-    <td align="right" style="font-size:10px;color:#8A94A6;font-weight:bold;padding:10px 12px 10px 6px;">RR</td>
+    <td align="center" style="font-size:10px;color:#8A94A6;font-weight:bold;padding:10px 12px 10px 6px;">PLAN</td>
   </tr>{act_rows}</table>
+</td></tr>
+<tr><td style="background-color:#111827;padding:0 26px 20px 26px;border-left:1px solid #232C42;border-right:1px solid #232C42;">
+  <div style="font-size:11px;letter-spacing:2px;color:#8A94A6;font-weight:bold;margin-bottom:10px;">📋 STANDARD ({len(std)}) — Backtest: 78% WR • PF 1.0 — chhota size, T1 par poora niklo</div>
+  <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #232C42;border-radius:8px;">
+  <tr style="background-color:#1A2233;">
+    <td style="font-size:10px;color:#8A94A6;font-weight:bold;padding:10px 6px 10px 12px;">STOCK</td>
+    <td align="center" style="font-size:10px;color:#8A94A6;font-weight:bold;padding:10px 6px;">RANK</td>
+    <td align="right" style="font-size:10px;color:#8A94A6;font-weight:bold;padding:10px 6px;">ENTRY</td>
+    <td align="right" style="font-size:10px;color:#8A94A6;font-weight:bold;padding:10px 6px;">SL</td>
+    <td align="right" style="font-size:10px;color:#8A94A6;font-weight:bold;padding:10px 6px;">T1</td>
+    <td align="right" style="font-size:10px;color:#8A94A6;font-weight:bold;padding:10px 6px;">T2</td>
+    <td align="center" style="font-size:10px;color:#8A94A6;font-weight:bold;padding:10px 12px 10px 6px;">PLAN</td>
+  </tr>{std_rows}</table>
 </td></tr>
 <tr><td style="background-color:#111827;padding:0 26px 20px 26px;border-left:1px solid #232C42;border-right:1px solid #232C42;">
   <div style="font-size:11px;letter-spacing:2px;color:#8A94A6;font-weight:bold;margin-bottom:10px;">🟡 RADAR WATCHLIST (TOP {min(len(watchlist), 12)} OF {len(watchlist)})</div>
@@ -818,32 +1012,9 @@ def build_html_report(results, regime_info, universe_label):
     <td align="right" style="font-size:10px;color:#8A94A6;font-weight:bold;padding:10px 12px 10px 6px;">MACD</td>
   </tr>{wl_rows}</table>
 </td></tr>
-<tr><td style="background-color:#111827;padding:0 26px 20px 26px;border-left:1px solid #232C42;border-right:1px solid #232C42;">
-  <div style="font-size:11px;letter-spacing:2px;color:#8A94A6;font-weight:bold;margin-bottom:10px;">🔵 RECENT TRIGGERS (TOP {min(len(recent), 10)} OF {len(recent)})</div>
-  <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #232C42;border-radius:8px;">
-  <tr style="background-color:#1A2233;">
-    <td style="font-size:10px;color:#8A94A6;font-weight:bold;padding:10px 6px 10px 12px;">STOCK</td>
-    <td align="right" style="font-size:10px;color:#8A94A6;font-weight:bold;padding:10px 6px;">ENTRY</td>
-    <td align="right" style="font-size:10px;color:#8A94A6;font-weight:bold;padding:10px 6px;">CMP</td>
-    <td align="right" style="font-size:10px;color:#8A94A6;font-weight:bold;padding:10px 6px;">P&amp;L</td>
-    <td align="right" style="font-size:10px;color:#8A94A6;font-weight:bold;padding:10px 12px 10px 6px;">STATUS</td>
-  </tr>{rc_rows}</table>
-</td></tr>
-<tr><td style="background-color:#111827;padding:0 26px 20px 26px;border-left:1px solid #232C42;border-right:1px solid #232C42;">
-  <table width="100%" cellpadding="0" cellspacing="0"><tr>
-    <td width="32%" align="center" style="background-color:#151B29;border:1px solid #232C42;border-radius:8px;padding:10px;">
-      <div style="font-size:16px;font-weight:800;color:#FFFFFF;">{len(universe_df)}</div><div style="font-size:10px;color:#8A94A6;letter-spacing:1px;">SCANNED</div></td>
-    <td width="2%"></td>
-    <td width="32%" align="center" style="background-color:#151B29;border:1px solid #232C42;border-radius:8px;padding:10px;">
-      <div style="font-size:16px;font-weight:800;color:#FFFFFF;">₹{PORTFOLIO_CAPITAL:,}</div><div style="font-size:10px;color:#8A94A6;letter-spacing:1px;">CAPITAL</div></td>
-    <td width="2%"></td>
-    <td width="32%" align="center" style="background-color:#151B29;border:1px solid #232C42;border-radius:8px;padding:10px;">
-      <div style="font-size:16px;font-weight:800;color:#FFFFFF;">📎 XLSX</div><div style="font-size:10px;color:#8A94A6;letter-spacing:1px;">ATTACHED</div></td>
-  </tr></table>
-</td></tr>
 <tr><td style="background-color:#0D1220;padding:18px 26px;border:1px solid #232C42;border-radius:0 0 8px 8px;">
-  <div style="font-size:11px;color:#5A6579;line-height:1.6;">⚠️ <b>Disclaimer:</b> Ye report sirf educational purpose ke liye hai, investment advice nahi hai. Trade karne se pehle apna research khud karein.</div>
-  <div style="font-size:11px;color:#5A6579;margin-top:8px;">🤖 Auto-generated by BMR Trinity Screener (GitHub Actions) &nbsp;•&nbsp; Full 5-sheet Excel attached</div>
+  <div style="font-size:11px;color:#5A6579;line-height:1.6;">📎 Full Excel (5 sheets incl. Position Tracker) attached &nbsp;•&nbsp; 🚀 FULL-RIDE = T1 par sirf SL cost par, bechna kuch nahi &nbsp;•&nbsp; ⚡ FULL-EXIT = T1 par 100% book karo</div>
+  <div style="font-size:11px;color:#5A6579;margin-top:8px;">⚠️ Educational purpose only, investment advice nahi hai.</div>
 </td></tr>
 </table></td></tr></table></body></html>"""
     return html
@@ -870,7 +1041,10 @@ if email_from and app_password:
     msg["To"] = email_from
     n_act = len(results.get('actionable', []))
     n_wl = len(results.get('watchlist', []))
-    msg["Subject"] = f"📈 BMR Screener: {n_act} Actionable + {n_wl} Radar | {datetime.now().strftime('%d-%b-%Y')}"
+    n_ex = sum(1 for t in results.get('recent', []) if t.get('fresh_exit'))
+    n_op = sum(1 for t in results.get('recent', []) if t.get('is_open'))
+    n_ultra = sum(1 for s in results.get('actionable', []) if s.get('tier')=='ULTRA')
+    msg["Subject"] = f"📈 BMR: {n_ex} EXIT + {n_op} Open + {n_act} New ({n_ultra}💎) + {n_wl} Radar | {datetime.now().strftime('%d-%b-%Y')}"
 
     msg.attach(MIMEText(html_report, "html", "utf-8"))
 
