@@ -24,7 +24,7 @@ print(f"[*] Configured Parameters:")
 print(f"    - Target Universe    : NSE {UNIVERSE.upper()}")
 print(f"    - Portfolio Capital  : ₹{PORTFOLIO_CAPITAL:,.2f}")
 print(f"    - Risk per Trade     : {RISK_PER_TRADE_PCT}% (₹{PORTFOLIO_CAPITAL * (RISK_PER_TRADE_PCT / 100):,.2f})")
-print(f"    - Target 1 Gain      : +{TARGET_1_GAIN_PCT*100:.1f}% (50% profit lock + move SL to Cost+0.5%)")
+print(f"    - Target 1 Gain      : +{TARGET_1_GAIN_PCT*100:.1f}% (M4: FULL EXIT at T1 | RIDE: SL to Cost+0.5%, no sale)")
 print(f"    - Target 2 Gain      : +{(T2_MULT-1)*100:.0f}% (runner exit)")
 print(f"    - Position Tracker   : last {TRACK_DAYS} days signals, exit alert {EXIT_ALERT_DAYS} days")
 print(f"    - M4 Exit Plans        : score 0-2 FULL-T1 / score 3-4 FULL-RIDE")
@@ -172,9 +172,13 @@ def simulate_exits(o, h, l, c, entry_idx, last_idx, entry, sl, t1, t2, plan='PAR
             if plan == 'FULL_T1':
                 legs.append((j, t1, rem, 'T1-FULL')); rem = 0.0; break
             if plan == 'FULL_RIDE':
+                if hj >= t2:
+                    legs.append((j, t2, rem, 'T2')); rem = 0.0; break
                 cur_sl = round(entry * 1.005, 2); t1_done = True
                 continue
             legs.append((j, t1, 0.5, 'T1')); rem = 0.5
+            if hj >= t2:
+                legs.append((j, t2, rem, 'T2')); rem = 0.0; break
             cur_sl = round(entry * 1.005, 2); t1_done = True
             continue
         if hj >= t2:
@@ -192,6 +196,7 @@ def tracker_status(legs, entry, cmp_now, entry_idx, dates, plan='PARTIAL', t1_to
     open_frac = sum(x[2] for x in legs if x[3] == 'OPEN')
     realised = sum(((x[1] - entry) / entry) * x[2] * 100.0 for x in closed)
     reasons = [x[3] for x in closed]
+    exit_px = round(sum(x[1] * x[2] for x in closed), 2) if closed else None
     is_open = open_frac > 0
     live = realised + (open_frac * (cmp_now - entry) / entry * 100.0 if is_open else 0.0)
     today = dates[-1].date()
@@ -218,14 +223,16 @@ def tracker_status(legs, entry, cmp_now, entry_idx, dates, plan='PARTIAL', t1_to
         elif 'T1-FULL' in reasons:
             status, action = "T1 FULL EXIT", "EXIT - T1 par poora book. Plan ke hisaab se closed"
         elif reasons == ['TIME'] or reasons == ['T1', 'TIME']:
-            status, action = "TIME UP", "25 din pure - CMP par exit karo"
+            status, action = "TIME UP", "25 sessions pure - CMP par exit karo"
         elif 'T1' in reasons:
             status, action = "T1+SL", "T1 profit bank, runner SL par nikla - closed"
         else:
             status, action = "SL HIT", "EXIT karo - Stop Loss hit. Discipline se niklo"
+    eff_sl = round(entry * 1.005, 2) if (plan == 'FULL_RIDE' and t1_touched and is_open) else None
     return {'live_pnl_pct': round(live, 2), 'status': status, 'action': action,
             'is_open': is_open, 'fresh_exit': fresh, 'exit_date': exit_date,
-            'exit_reason': exit_reason, 'days_held': days_held}
+            'exit_reason': exit_reason, 'days_held': days_held, 'exit_price': exit_px,
+            'eff_sl': eff_sl, 't1_touched': t1_touched}
 
 
 def run_screener(universe_df, capital=500000, risk_pct=1.0):
@@ -323,6 +330,7 @@ def run_screener(universe_df, capital=500000, risk_pct=1.0):
 
                 cmp = c[i]
                 is_uptrend = (cmp > ema200[i]) and (ema50[i] > ema200[i])
+                _pend = None
 
                 # Check regime enforcement
                 if ENFORCE_NIFTY_REGIME and not regime['is_bull_market']:
@@ -371,6 +379,7 @@ def run_screener(universe_df, capital=500000, risk_pct=1.0):
                                     # FIXED: 1% per-trade risk (param) use karo, stop-distance % nahi
                                     risk_capital = capital * (risk_pct / 100.0)
                                     suggested_shares = max(int(math.floor(risk_capital / risk_per_share)), 1)
+                                    suggested_shares = min(suggested_shares, max(int(capital // entry_price), 1))
                                     total_investment = round(suggested_shares * entry_price, 2)
 
                                     score = 0
@@ -388,7 +397,7 @@ def run_screener(universe_df, capital=500000, risk_pct=1.0):
                                     if vol[i] > vol_sma[i]: g_score += 1
                                     guidance = "RIDE" if g_score >= 3 else "BOOK-FAST"
                                     plan = "FULL_RIDE" if g_score >= 3 else "FULL_T1"
-                                    actionable_signals.append({
+                                    _pend = {
                                         'rank': rank,
                                         'symbol': meta['symbol'],
                                         'name': meta['name'],
@@ -411,11 +420,10 @@ def run_screener(universe_df, capital=500000, risk_pct=1.0):
                                         'g_score': g_score,
                                         'plan': plan,
                                         'tier': ('ULTRA' if g_score >= 2 else 'STANDARD')
-                                    })
-                                    continue
+                                    }
 
                 # --- 2. RADAR WATCHLIST EVALUATION ---
-                if is_uptrend:
+                if is_uptrend and _pend is None:
                     dist_to_bb_low = (cmp - bb_low[i]) / cmp
                     if 0.0 <= dist_to_bb_low <= 0.035 and rsi[i] <= 45.0:
                         watchlist_candidates.append({
@@ -432,15 +440,22 @@ def run_screener(universe_df, capital=500000, risk_pct=1.0):
                         })
 
                 # --- 3. POSITION TRACKER (signals from last TRACK_DAYS, simulated to today) ---
-                for offset in range(1, TRACK_DAYS + 1):
+                _ticker_busy = -1
+                for offset in range(TRACK_DAYS, 0, -1):
                     p_i = i - offset
                     if p_i < 100: continue
+                    if p_i <= _ticker_busy: continue
                     if not (c[p_i] > ema200[p_i] and ema50[p_i] > ema200[p_i]): continue
+                    if ema50[p_i] < ema50[p_i-5] * 0.998: continue
+                    _nm0 = _nifty_mom_on(dates[p_i].date())
+                    if not (True if np.isnan(ret30[p_i]) else (ret30[p_i] >= _nm0 - 0.025)): continue
                     if bb_low_slope[p_i] < -0.012: continue
                     if not any(l[p_i-k] <= bb_low[p_i-k] * 1.005 for k in range(2)): continue
                     if not (any(rsi[p_i-k] <= 40 for k in range(3)) and rsi[p_i] > rsi[p_i-1] and rsi[p_i] >= 28): continue
                     if not (hist[p_i] > hist[p_i-1]): continue
-                    if not (c[p_i] > bb_low[p_i] and c[p_i] > o[p_i]): continue
+                    _lw0 = min(o[p_i], c[p_i]) - l[p_i]
+                    _wick0 = (_lw0 / (h[p_i] - l[p_i] + 1e-6) >= 0.20) or (c[p_i] >= (h[p_i] + l[p_i]) * 0.50) or (c[p_i] > c[p_i-1])
+                    if not ((c[p_i] > bb_low[p_i]) and (c[p_i] > o[p_i]) and _wick0): continue
 
                     sig_close = c[p_i]
                     p_sl = round(min(l[p_i-2], l[p_i-1], l[p_i]) - (1.3 * atr[p_i]), 2)
@@ -451,6 +466,7 @@ def run_screener(universe_df, capital=500000, risk_pct=1.0):
                     if e_idx > i: continue
                     e_price = float(o[e_idx])
                     if e_price <= p_sl: continue
+                    if (e_price - sig_close) / sig_close > 0.015: continue
                     p_t1 = round(e_price * (1.0 + TARGET_1_GAIN_PCT), 2)
                     p_t2 = round(max(float(bb_up[p_i]), e_price * T2_MULT), 2)
                     _gs = 0
@@ -480,12 +496,18 @@ def run_screener(universe_df, capital=500000, risk_pct=1.0):
                         'fresh_exit': tinfo['fresh_exit'],
                         'exit_date': tinfo['exit_date'],
                         'exit_reason': tinfo['exit_reason'],
+                        'exit_price': tinfo['exit_price'],
+                        'eff_sl': tinfo['eff_sl'],
+                        't1_touched': tinfo['t1_touched'],
                         'days_held': tinfo['days_held'],
                         'guidance': ('RIDE' if _tplan == 'FULL_RIDE' else 'BOOK-FAST'),
                         'plan': _tplan,
                         'g_score': _gs,
                         'tier': ('ULTRA' if _gs >= 2 else 'STANDARD'),
                     })
+                    _ticker_busy = legs[-1][0]
+                if _pend is not None and _ticker_busy < i:
+                    actionable_signals.append(_pend)
             except Exception:
                 continue
 
@@ -521,7 +543,7 @@ print(f"  - Actionable Buy Signals (Ready for Entry): {len(actionable)}")
 print(f"  - Radar Watchlist (At Lower Band Support) : {len(watchlist)}")
 print(f"  - Tracked Signals (Past {TRACK_DAYS} Days)      : {len(recent)}")
 n_exit = sum(1 for t in recent if t.get("fresh_exit"))
-print(f"  - Fresh EXIT alerts (T2/SL hit)         : {n_exit}")
+print(f"  - Fresh EXIT alerts (T1/T2/SL/TIME)         : {n_exit}")
 n_open = sum(1 for t in recent if t.get("is_open"))
 print(f"  - Open tracked positions                : {n_open}")
 print(f"{'='*85}\n")
@@ -635,8 +657,9 @@ def export_to_excel(results, regime_info, universe_label="NSE Top 1000"):
                 if col_i == 1:
                     if val == 'A+': cell.fill = fill_light_green; cell.font = font_green
                     elif val == 'A': cell.fill = fill_cyan_bg; cell.font = font_bold
-                elif col_i in [5, 6, 7, 9, 11, 15]: cell.number_format = '₹#,##0.00'
-                elif col_i == 6: cell.font = font_red
+                elif col_i in [5, 6, 7, 9, 11, 15]:
+                    cell.number_format = '₹#,##0.00'
+                    if col_i == 6: cell.font = font_red
                 elif col_i in [8, 10, 12]:
                     cell.number_format = '+0.0%;-0.0%;0.0%'
                     if col_i in [10, 12]: cell.font = font_green
@@ -689,15 +712,15 @@ def export_to_excel(results, regime_info, universe_label="NSE Top 1000"):
     # Sheet 3: Position Tracker (25-day, live simulation)
     ws3 = wb.create_sheet(title="Position Tracker (25 Days)")
     ws3.views.sheetView[0].showGridLines = True
-    ws3.merge_cells('A1:L1')
+    ws3.merge_cells('A1:M1')
     ws3['A1'] = "POSITION TRACKER - OPEN HOLDINGS + EXIT ALERTS (AUTO-SIMULATED TO TODAY)"
     ws3['A1'].font = font_title; ws3['A1'].fill = fill_header_blue; ws3['A1'].alignment = align_center
     ws3.row_dimensions[1].height = 36
-    ws3.merge_cells('A2:L2')
-    ws3['A2'] = "T1 = book 50% + SL to Cost | T2 = full exit | SL = exit now | TIME = 25 days over, exit at CMP"
+    ws3.merge_cells('A2:M2')
+    ws3['A2'] = "M4: FULL_T1 = T1 par 100% exit | FULL_RIDE = T1 par SL cost par, T2 par exit | SL = exit now | TIME = 25 sessions over, exit at CMP"
     ws3['A2'].font = font_subtitle; ws3['A2'].fill = fill_slate; ws3['A2'].alignment = align_center
     ws3.row_dimensions[2].height = 22
-    headers_3 = ["Symbol", "Trigger Date", "Days Held", "Entry (Rs)", "SL (Rs)", "T1 (Rs)", "T2 (Rs)", "CMP (Rs)", "Live P&L (%)", "Status", "Tier", "Action"]
+    headers_3 = ["Symbol", "Trigger Date", "Days Held", "Entry (₹)", "SL (₹)", "T1 (₹)", "T2 (₹)", "CMP (₹)", "Live P&L (%)", "Status", "Tier", "Action", "Exit (₹)"]
     for c_i, h in enumerate(headers_3, 1):
         cell = ws3.cell(row=4, column=c_i, value=h)
         cell.font = font_header; cell.fill = fill_slate; cell.alignment = align_center; cell.border = thin_border
@@ -708,14 +731,14 @@ def export_to_excel(results, regime_info, universe_label="NSE Top 1000"):
     for idx, item in enumerate((tr_open + tr_closed)[:50]):
         r_idx += 1
         row_fill = fill_zebra if (idx % 2 == 0) else PatternFill(fill_type=None)
-        row_vals = [item['symbol'], item['trigger_date'], item['days_held'], item['entry_price'], item['stop_loss'], item['target_1'], item['target_2'], item['cmp'], item['live_pnl_pct'] / 100.0, item['status'], ("ULTRA" if item.get('tier')=="ULTRA" else "STANDARD"), item['action']]
+        row_vals = [item['symbol'], item['trigger_date'], item['days_held'], item['entry_price'], (item.get('eff_sl') if item.get('eff_sl') is not None else item['stop_loss']), item['target_1'], item['target_2'], item['cmp'], item['live_pnl_pct'] / 100.0, item['status'], ("ULTRA" if item.get('tier')=="ULTRA" else "STANDARD"), item['action'], (item.get('exit_price') if item.get('exit_price') is not None else item['cmp'])]
         for col_i, val in enumerate(row_vals, 1):
             cell = ws3.cell(row=r_idx, column=col_i, value=val)
             cell.font = font_body; cell.border = thin_border; cell.fill = row_fill
             if col_i in [1, 2, 3, 10, 11]: cell.alignment = align_center
             elif col_i == 12: cell.alignment = align_left
             else: cell.alignment = align_right
-            if col_i in [4, 5, 6, 7, 8]: cell.number_format = 'Rs#,##0.00'
+            if col_i in [4, 5, 6, 7, 8, 13]: cell.number_format = '₹#,##0.00'
             elif col_i == 9:
                 cell.number_format = '+0.0%;-0.0%;0.0%'
                 cell.font = font_green if val >= 0 else font_red
@@ -729,7 +752,7 @@ def export_to_excel(results, regime_info, universe_label="NSE Top 1000"):
                 if val == 'ULTRA': cell.fill = fill_amber_bg; cell.font = font_bold
         ws3.row_dimensions[r_idx].height = 20
     if r_idx == 4:
-        ws3.merge_cells('A5:L5')
+        ws3.merge_cells('A5:M5')
         ws3['A5'] = "No tracked signals in last 25 days."
         ws3['A5'].font = font_bold; ws3['A5'].alignment = align_center
 
@@ -768,8 +791,8 @@ def export_to_excel(results, regime_info, universe_label="NSE Top 1000"):
         ("Step 1: Daily Screener Run Time", "Run screener daily between 3:15 PM - 3:25 PM (to catch closing prices) or after market hours (7:00 PM - 11:00 PM)."),
         ("Step 2: Order Placement (Subah 9:15 AM)", "Agley din market open hote hi 'Suggested Qty' ke hisab se order execute karein. Do not chase if stock opens > 1.5% gap-up."),
         ("Step 3: Immediate Stop Loss Order", "Broker app (Zerodha / Groww / Angel One / Upstox) me sheet ka exact 'Stop Loss (₹)' ka GTT / SL-Limit order turant laga dein."),
-        ("Step 4: Target 1 Partial Profit (50%)", "Jab stock Target 1 (20 SMA / +3%) hit kare, 50% shares sell karke profit lock karein. SL ko Cost + 0.5% par trail karein."),
-        ("Step 5: Runner Management (Remaining 50%)", "Bachi hui half position ko pichhle 3 din ke swing low ke niche trail karein. Upper BB ya RSI >= 70 hit hote hi pura exit karein."),
+        ("Step 4: Target 1 - M4 Rule", "Plan FULL_T1 (score 0-2): T1 hit hote hi 100% SELL karo. Plan FULL_RIDE (score 3-4): KUCH MAT BECHO - sirf SL ko Cost + 0.5% par trail karo."),
+        ("Step 5: Target 2 / Trailed SL (RIDE only)", "FULL_RIDE position T2 (+6% ya Upper BB) par 100% exit karo. T2 se pehle trailed SL (Cost + 0.5%) hite to wahi niklo - chhota profit lock."),
         ("Step 6: Time Stop Discipline", "Agar stock 25 trading sessions (lagbhag 1 se 1.2 mahine) me Target 2 hit na kare, toh Day 26 par market price par position band kar dein.")
     ]
     ws5.cell(row=3, column=1, value="SOP Step").font = font_header; ws5.cell(row=3, column=1).fill = fill_slate
@@ -844,6 +867,7 @@ def build_html_report(results, regime_info, universe_label):
       <td align="right" style="font-size:13px;color:{pnl_c};font-weight:bold;padding:10px 6px;border-top:1px solid #232C42;">{t['live_pnl_pct']:+.1f}%</td>
       <td align="right" style="padding:10px 12px 10px 6px;border-top:1px solid #232C42;">{badge}</td>
     </tr>
+    <tr><td colspan="4" style="font-size:11px;color:#8A94A6;padding:0 6px 2px 12px;">Exit @ {("₹{:,.2f}".format(t["exit_price"]) if t.get("exit_price") is not None else "-")} &nbsp;•&nbsp; 🛑 SL ₹{t["stop_loss"]:,.2f} &nbsp;•&nbsp; 🎯 T1 ₹{t["target_1"]:,.2f} &nbsp;•&nbsp; 🎯 T2 ₹{t["target_2"]:,.2f}</td></tr>
     <tr><td colspan="4" style="font-size:11px;color:#F0B90B;padding:0 6px 10px 12px;">👉 {E(t['action'])}</td></tr>"""
     if not ex_rows:
         ex_rows = """<tr><td style="font-size:13px;color:#16C784;text-align:center;padding:14px;">👍 Koi fresh exit nahi — sab positions track par hain.</td></tr>"""
@@ -852,14 +876,15 @@ def build_html_report(results, regime_info, universe_label):
     op_rows = ""
     for t in openpos[:15]:
         pnl_c = "#16C784" if t['live_pnl_pct'] >= 0 else "#EA3943"
-        t1tag = "T1✅ " if "T1" in t['exit_reason'] else ""
+        t1tag = "T1✅ " if t.get('t1_touched') else ""
         op_rows += f"""<tr>
       <td style="font-size:13px;color:#FFFFFF;font-weight:bold;padding:10px 6px 10px 12px;border-top:1px solid #232C42;">{('💎' if t.get('tier')=='ULTRA' else '📋')} {E(t['symbol'])}<div style="font-size:10px;color:#8A94A6;font-weight:normal;">{t1tag}{E(t['trigger_date'])} • {t['days_held']}d</div></td>
       <td align="right" style="font-size:13px;color:#FFFFFF;padding:10px 6px;border-top:1px solid #232C42;">₹{t['entry_price']:,.2f}</td>
       <td align="right" style="font-size:13px;color:#FFFFFF;padding:10px 6px;border-top:1px solid #232C42;">₹{t['cmp']:,.2f}</td>
       <td align="right" style="font-size:13px;color:{pnl_c};font-weight:bold;padding:10px 6px;border-top:1px solid #232C42;">{t['live_pnl_pct']:+.1f}%</td>
       <td style="font-size:11px;color:#B0B8C8;padding:10px 12px 10px 6px;border-top:1px solid #232C42;">{E(t['action'])}</td>
-    </tr>"""
+    </tr>
+    <tr><td colspan="5" style="font-size:11px;color:#8A94A6;padding:0 6px 10px 12px;">🛑 SL ₹{(t["eff_sl"] if t.get("eff_sl") is not None else t["stop_loss"]):,.2f}{" (trailed🔒)" if t.get("eff_sl") is not None else ""} &nbsp;•&nbsp; 🎯 T1 ₹{t["target_1"]:,.2f} &nbsp;•&nbsp; 🎯 T2 ₹{t["target_2"]:,.2f}</td></tr>"""
     if not op_rows:
         op_rows = """<tr><td colspan="5" style="font-size:13px;color:#8A94A6;text-align:center;padding:14px;">Koi open tracked position nahi.</td></tr>"""
 
@@ -976,7 +1001,7 @@ def build_html_report(results, regime_info, universe_label):
   </tr>{op_rows}</table>
 </td></tr>
 <tr><td style="background-color:#111827;padding:0 26px 20px 26px;border-left:1px solid #232C42;border-right:1px solid #232C42;">
-  <div style="font-size:11px;letter-spacing:2px;color:#8A94A6;font-weight:bold;margin-bottom:10px;">💎 ULTRA QUALITY ({len(ultra)}) — Backtest: 83% WR • PF 1.6 — best signals, normal size</div>
+  <div style="font-size:11px;letter-spacing:2px;color:#8A94A6;font-weight:bold;margin-bottom:10px;">💎 ULTRA QUALITY ({len(ultra)}) — Backtest: 85% WR • PF 1.8 — best signals, normal size</div>
   <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #232C42;border-radius:8px;">
   <tr style="background-color:#1A2233;">
     <td style="font-size:10px;color:#8A94A6;font-weight:bold;padding:10px 6px 10px 12px;">STOCK</td>
@@ -1013,7 +1038,7 @@ def build_html_report(results, regime_info, universe_label):
   </tr>{wl_rows}</table>
 </td></tr>
 <tr><td style="background-color:#0D1220;padding:18px 26px;border:1px solid #232C42;border-radius:0 0 8px 8px;">
-  <div style="font-size:11px;color:#5A6579;line-height:1.6;">📎 Full Excel (5 sheets incl. Position Tracker) attached &nbsp;•&nbsp; 🚀 FULL-RIDE = T1 par sirf SL cost par, bechna kuch nahi &nbsp;•&nbsp; ⚡ FULL-EXIT = T1 par 100% book karo</div>
+  <div style="font-size:11px;color:#5A6579;line-height:1.6;">📎 Full Excel (5 sheets incl. Position Tracker) attached &nbsp;•&nbsp; 🚀 FULL-RIDE = T1 par sirf SL cost par, bechna kuch nahi &nbsp;•&nbsp; ⚡ FULL-EXIT = T1 par 100% book karo &nbsp;•&nbsp; 📌 Entry/SL/T1/T2 aaj ke close par based hain, kal ke open par thoda adjust ho sakte hain</div>
   <div style="font-size:11px;color:#5A6579;margin-top:8px;">⚠️ Educational purpose only, investment advice nahi hai.</div>
 </td></tr>
 </table></td></tr></table></body></html>"""
