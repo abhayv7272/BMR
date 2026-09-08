@@ -1,0 +1,8 @@
+# Yahan apne Colab me jo library use ki hai wo likho, ek per line
+# Example:
+# requests
+# pandas
+# yfinance
+
+requests
+pandas
