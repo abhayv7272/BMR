@@ -1,35 +1,111 @@
 name: Roz Shaam 6 Baje Report
 
 on:
-  push:
-    branches:
-      - main
-      - arena/01a09dbe-daily-report
-  schedule:
-    # 6 PM IST = 12:30 PM UTC (GitHub UTC time use karta hai)
-    - cron: '30 12 * * *'
+  # =================================================================
+  # ASLI TRIGGER - ye 6 baje pakka mail dega
+  # -----------------------------------------------------------------
+  # Is repo pe GitHub ka SCHEDULED cron roz 3.3 se 5.7 ghante late
+  # chalta hai (7 din ka naapa hua average: 4.3 ghante). Ye peak-minute
+  # ki baat nahi hai - deri har roz consistent hai.
+  #
+  # Par repository_dispatch / workflow_dispatch 0-2 SECOND me chalte
+  # hain (verify kiya gaya). Isliye bahar se trigger karo.
+  #
+  # Setup (ek baar, README me poora likha hai):
+  #   cron-job.org pe free account -> roz 5:55 PM IST pe POST karo:
+  #   https://api.github.com/repos/abhayv7272/daily-report/dispatches
+  #   body: {"event_type":"daily-report"}
+  # =================================================================
+  repository_dispatch:
+    types: [daily-report]
+
   # Ye button "abhi chalao" ka option dega (testing ke liye)
   workflow_dispatch:
+
+  # -----------------------------------------------------------------
+  # BACKUP ONLY - agar bahar wala trigger kabhi fail ho jaye.
+  # Ye late chalega (upar wali wajah se), par mail bilkul na aane se
+  # behtar hai. NSE 3:30 PM IST pe band hota hai, usse pehle run
+  # karne ka koi fayda nahi - data adhoora hoga.
+  # Cron UTC me hota hai. IST = UTC + 5:30
+  # -----------------------------------------------------------------
+  schedule:
+    - cron: '12 10 * * 1-5'   # 03:42 PM IST fire (market band hote hi)
+    - cron: '8 11 * * 1-5'    # 04:38 PM IST fire
+    - cron: '6 12 * * 1-5'    # 05:36 PM IST fire
+
+# Agar do slot overlap ho jayein to ek hi chale
+concurrency:
+  group: daily-report
+  cancel-in-progress: false
+
+# Guard step ko pichle runs padhne ke liye chahiye
+permissions:
+  contents: read
+  actions: read
 
 jobs:
   run-report:
     runs-on: ubuntu-latest
+    env:
+      TZ: Asia/Kolkata
 
     steps:
+      - name: Aaj ka mail already gaya kya? (duplicate rokna)
+        id: guard
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "Trigger: ${{ github.event_name }}"
+          echo "Abhi IST: $(TZ=Asia/Kolkata date '+%A, %d %b %Y %I:%M %p')"
+
+          # Manual button ya bahar se aaya dispatch = hamesha chalao
+          if [ "${{ github.event_name }}" != "schedule" ]; then
+            echo "run=yes" >> "$GITHUB_OUTPUT"
+            echo "Direct trigger - bina check ke chal raha hai."
+            exit 0
+          fi
+
+          TODAY_IST=$(TZ=Asia/Kolkata date +%F)
+          echo "Aaj (IST): $TODAY_IST"
+
+          # Aaj ke successful scheduled runs gino (is run ko chhod ke)
+          # API fail ho jaye to DONE=0 -> mail bhej do (mail miss karne se
+          # behtar hai ek extra mail aa jaye)
+          DONE=$(gh api "/repos/${{ github.repository }}/actions/workflows/daily.yml/runs?status=success&per_page=40" \
+            --jq "[.workflow_runs[]
+                   | select(.id != ${{ github.run_id }})
+                   | select((.updated_at | fromdateiso8601 + 19800 | strftime(\"%Y-%m-%d\")) == \"$TODAY_IST\")]
+                  | length" 2>/dev/null) || DONE=0
+          [ -z "$DONE" ] && DONE=0
+
+          echo "Aaj ke successful runs: $DONE"
+          if [ "$DONE" -gt 0 ]; then
+            echo "run=no" >> "$GITHUB_OUTPUT"
+            echo "::notice::Aaj ka mail already ja chuka hai - ye backup slot skip."
+          else
+            echo "run=yes" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Code lao
+        if: steps.guard.outputs.run == 'yes'
         uses: actions/checkout@v4
 
       - name: Python setup karo
+        if: steps.guard.outputs.run == 'yes'
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: pip
 
       - name: Library install karo
+        if: steps.guard.outputs.run == 'yes'
         run: |
           python -m pip install --upgrade pip
           python -m pip install --requirement requirements.txt
 
       - name: Validate email configuration
+        if: steps.guard.outputs.run == 'yes'
         env:
           MY_EMAIL: ${{ secrets.MY_EMAIL }}
           MY_APP_PASSWORD: ${{ secrets.MY_APP_PASSWORD }}
@@ -38,6 +114,7 @@ jobs:
           test -n "$MY_APP_PASSWORD" || { echo 'ERROR: MY_APP_PASSWORD secret is missing'; exit 1; }
 
       - name: Report banao aur email bhejo
+        if: steps.guard.outputs.run == 'yes'
         env:
           MY_EMAIL: ${{ secrets.MY_EMAIL }}
           MY_APP_PASSWORD: ${{ secrets.MY_APP_PASSWORD }}
@@ -45,7 +122,9 @@ jobs:
         run: python -u main.py
 
       - name: Upload report files (even if email is not visible)
-        if: always()
+        # Guard ne skip kiya to artifact step bhi skip (warna khali run
+        # "failed artifact" warning deta hai)
+        if: always() && steps.guard.outputs.run == 'yes'
         uses: actions/upload-artifact@v4
         with:
           name: daily-report-${{ github.run_number }}
