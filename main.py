@@ -563,10 +563,15 @@ import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 from datetime import datetime, timedelta, timezone
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:  # Python < 3.9 fallback
+    ZoneInfo = None
 
-# GitHub ka runner UTC pe chalta hai. Isliye har jagah India time force karo,
-# warna 6:30 PM UTC ke baad report pe PICHLI date chhap jati hai.
-IST = timezone(timedelta(hours=5, minutes=30))
+# GitHub runner UTC pe chalta hai. Isliye har jagah India time force karo,
+# warna UTC date/time mail aur Excel report me galat chhap sakta hai.
+# India = Asia/Kolkata (UTC/GMT +05:30, no DST).
+IST = ZoneInfo("Asia/Kolkata") if ZoneInfo else timezone(timedelta(hours=5, minutes=30))
 
 
 def now_ist():
@@ -619,7 +624,7 @@ def export_to_excel(results, regime_info, universe_label="NSE Top 1000"):
     ws1['A1'].font = font_title; ws1['A1'].fill = fill_navy; ws1['A1'].alignment = align_center
     ws1.row_dimensions[1].height = 36
 
-    today_str = now_ist().strftime("%d %b %Y, %I:%M %p")
+    today_str = now_ist().strftime("%d %b %Y, %I:%M %p IST").lstrip("0")
     ws1.merge_cells('A2:T2')
     regime_txt = "BULLISH (Safe to Swing Trade)" if regime_info.get('is_bull_market') else "CORRECTION (Caution Recommended)"
     ws1['A2'] = f"Generated on: {today_str} | Universe: {universe_label} | Nifty 50 Status: {regime_txt} (CMP: ₹{regime_info.get('cmp', 0):,.2f})"
@@ -849,9 +854,10 @@ def build_html_report(results, regime_info, universe_label):
     openpos = [t for t in tracked if t.get('is_open')]
     ultra = [s for s in actionable if s.get('tier') == 'ULTRA']
     std = [s for s in actionable if s.get('tier') != 'ULTRA']
-    date_str = now_ist().strftime("%A, %d %B %Y")
-    # Jis waqt report actually bani, wahi dikhao (pehle "6:00 PM IST" hardcoded tha)
-    sent_str = now_ist().strftime("%I:%M %p IST").lstrip("0")
+    generated_at = now_ist()
+    date_str = generated_at.strftime("%A, %d %B %Y")
+    # Jis waqt report actually bani, wahi India time dikhao (pehle "6:00 PM IST" hardcoded tha)
+    sent_str = generated_at.strftime("%I:%M %p IST").lstrip("0")
 
     is_bull = regime_info.get('is_bull_market', False)
     regime_txt = "BULL MARKET" if is_bull else "CORRECTION"

@@ -19,15 +19,21 @@ Wajah: **GitHub ka scheduled cron is repo pe roz 3–6 ghante late chalta hai.**
 
 **Average 4.3 ghante. Sabse kam bhi 3.3 ghante.**
 
-Ye "peak minute" ki baat nahi hai — deri har roz hai. Cron ka time
-aage-peeche karne se fix **nahi** hoga. 4 ghante pehle set karein to
-run market band hone (3:30 PM) se pehle chala jayega aur data adhoora
-milega.
+Ye "peak minute" ki baat nahi hai — deri har roz hai. Sirf GitHub cron
+ko exact 6 PM IST par rakhna reliable **nahi** hai, kyunki GitHub use late
+chala sakta hai.
 
-## Solution
+Repo me ab old `12:30 UTC / 6:00 PM IST` GitHub slot hata diya gaya hai.
+Backup ke liye workflow me adjusted slots hain:
+
+- `08:10 UTC` / `01:40 PM IST` — observed GitHub delay ke baad approx 6 PM IST
+- `10:15 UTC` / `03:45 PM IST` — market close ke baad safety net
+
+## Best Solution
 
 `repository_dispatch` **0–2 second** me chalta hai (verify kiya gaya —
-push aur manual dispatch dono turant chale). To bahar se trigger karo.
+push aur manual dispatch dono turant chale). Exact 5:55-6:00 PM IST ke
+liye bahar se trigger karo.
 
 ---
 
@@ -95,12 +101,13 @@ cron-job.org pe job kholo → **TEST RUN** dabao.
 
 ## Backup
 
-Agar cron-job.org kabhi down ho, workflow me 3 GitHub cron slots abhi
-bhi hain (3:42 / 4:38 / 5:36 PM IST fire). Wo late chalenge, par mail
-bilkul na aane se behtar hai.
+Agar cron-job.org kabhi down ho, workflow me 2 GitHub cron backup slots
+abhi bhi hain (1:40 PM aur 3:45 PM IST fire). GitHub inhe late chala sakta
+hai, par mail bilkul na aane se behtar hai.
 
-Duplicate guard laga hua hai — ek din me **ek hi mail** aayega, chahe
-kitne bhi trigger lagein.
+Duplicate guard laga hua hai — ek din me market close ke baad **ek hi mail**
+aayega, chahe kitne bhi trigger lagein. Subah ka manual/test run evening
+mail ko skip nahi karega.
 
 ## Alternative (agar cron-job.org pasand na aaye)
 
