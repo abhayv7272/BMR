@@ -84,11 +84,37 @@ jobs:
 
       - name: Library install karo
         if: steps.guard.outputs.run == 'yes'
-        run: pip install -r requirements.txt
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --requirement requirements.txt
+
+      - name: Validate email configuration
+        if: steps.guard.outputs.run == 'yes'
+        env:
+          MY_EMAIL: ${{ secrets.MY_EMAIL }}
+          MY_APP_PASSWORD: ${{ secrets.MY_APP_PASSWORD }}
+        run: |
+          test -n "$MY_EMAIL" || { echo 'ERROR: MY_EMAIL secret is missing'; exit 1; }
+          test -n "$MY_APP_PASSWORD" || { echo 'ERROR: MY_APP_PASSWORD secret is missing'; exit 1; }
 
       - name: Report banao aur email bhejo
         if: steps.guard.outputs.run == 'yes'
         env:
           MY_EMAIL: ${{ secrets.MY_EMAIL }}
           MY_APP_PASSWORD: ${{ secrets.MY_APP_PASSWORD }}
-        run: python main.py
+        timeout-minutes: 25
+        run: python -u main.py
+
+      - name: Upload report files (even if email is not visible)
+        # Guard ne skip kiya to artifact step bhi skip (warna khali run
+        # "failed artifact" warning deta hai)
+        if: always() && steps.guard.outputs.run == 'yes'
+        uses: actions/upload-artifact@v4
+        with:
+          name: daily-report-${{ github.run_number }}
+          path: |
+            report.html
+            results.json
+            BMR_Trinity_NSE_Screener_Report_*.xlsx
+          if-no-files-found: warn
+          retention-days: 14
