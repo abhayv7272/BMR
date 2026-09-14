@@ -1078,10 +1078,28 @@ if email_from and app_password:
     part.add_header("Content-Disposition", "attachment", filename=excel_file)
     msg.attach(part)
 
-    with smtplib.SMTP("smtp.gmail.com", 587) as server:
-        server.starttls()
-        server.login(email_from, app_password)
-        server.send_message(msg)
-    print("✅ Email sent successfully with Excel attachment!")
+    # Gmail can transiently reset connections from hosted runners.  Use a
+    # bounded retry and an explicit socket timeout so a run cannot hang until
+    # GitHub kills it with no useful diagnosis.
+    last_error = None
+    for attempt in range(1, 4):
+        try:
+            with smtplib.SMTP("smtp.gmail.com", 587, timeout=45) as server:
+                server.ehlo()
+                server.starttls()
+                server.ehlo()
+                server.login(email_from, app_password)
+                server.send_message(msg)
+            print("✅ Email sent successfully with Excel attachment!")
+            break
+        except (smtplib.SMTPException, OSError) as exc:
+            last_error = exc
+            print(f"[!] SMTP attempt {attempt}/3 failed: {exc}")
+            if attempt < 3:
+                time.sleep(5 * attempt)
+    else:
+        raise RuntimeError(f"Could not send daily report after 3 SMTP attempts: {last_error}") from last_error
 else:
-    print("[i] MY_EMAIL/MY_APP_PASSWORD not set — email skipped (report.html + xlsx saved locally).")
+    # Do not report a green workflow when the actual deliverable was never
+    # sent.  The artifact step still preserves diagnostics on failed runs.
+    raise RuntimeError("MY_EMAIL and MY_APP_PASSWORD must be configured; refusing to silently skip the daily report.")
