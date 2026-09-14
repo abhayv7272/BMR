@@ -1,6 +1,10 @@
 name: Roz Shaam 6 Baje Report
 
 on:
+  push:
+    branches:
+      - main
+      - arena/01a09dbe-daily-report
   schedule:
     # 6 PM IST = 12:30 PM UTC (GitHub UTC time use karta hai)
     - cron: '30 12 * * *'
