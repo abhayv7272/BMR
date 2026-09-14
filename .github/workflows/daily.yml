@@ -2,28 +2,92 @@ name: Roz Shaam 6 Baje Report
 
 on:
   schedule:
-    # 6 PM IST = 12:30 PM UTC (GitHub UTC time use karta hai)
-    - cron: '30 12 * * *'
+    # ---------------------------------------------------------------
+    # GitHub ka scheduled cron GUARANTEED nahi hota. Peak load pe
+    # queue me atakta hai. Pichla record: :30 wale slot pe roz 4-5
+    # ghante ki deri (6 PM ki jagah 10-11:40 PM IST mail aa raha tha).
+    #
+    # Isliye 3 cheezein ki hain:
+    #   1) Target 4:30 PM IST -> 6 PM tak 1.5 ghante ka buffer
+    #   2) "Odd" minute (:07 / :23 / :41) -> :00 aur :30 sabse busy hote hain
+    #   3) 3 backup slots -> pehla atka to doosra pakad lega
+    #      (guard step duplicate mail block kar deta hai)
+    #
+    # Cron UTC me hai. IST = UTC + 5:30
+    # ---------------------------------------------------------------
+    - cron: '7 11 * * 1-5'    # 04:37 PM IST  (primary)
+    - cron: '23 12 * * 1-5'   # 05:53 PM IST  (backup 1)
+    - cron: '41 13 * * 1-5'   # 07:11 PM IST  (backup 2 / last resort)
   # Ye button "abhi chalao" ka option dega (testing ke liye)
   workflow_dispatch:
+
+# Agar do slot overlap ho jayein to ek hi chale
+concurrency:
+  group: daily-report
+  cancel-in-progress: false
+
+# Guard step ko pichle runs padhne ke liye chahiye
+permissions:
+  contents: read
+  actions: read
 
 jobs:
   run-report:
     runs-on: ubuntu-latest
+    env:
+      TZ: Asia/Kolkata
 
     steps:
+      - name: Aaj ka mail already gaya kya? (duplicate rokna)
+        id: guard
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # workflow_dispatch = manual, hamesha chalao
+          if [ "${{ github.event_name }}" != "schedule" ]; then
+            echo "run=yes" >> "$GITHUB_OUTPUT"
+            echo "Manual run - chal raha hai."
+            exit 0
+          fi
+
+          TODAY_IST=$(TZ=Asia/Kolkata date +%F)
+          echo "Aaj (IST): $TODAY_IST"
+
+          # Aaj ke successful scheduled runs gino (is run ko chhod ke)
+          # API fail ho jaye to DONE=0 -> mail bhej do (mail miss karne se
+          # behtar hai ek extra mail aa jaye)
+          DONE=$(gh api "/repos/${{ github.repository }}/actions/workflows/daily.yml/runs?status=success&per_page=40" \
+            --jq "[.workflow_runs[]
+                   | select(.id != ${{ github.run_id }})
+                   | select((.updated_at | fromdateiso8601 + 19800 | strftime(\"%Y-%m-%d\")) == \"$TODAY_IST\")]
+                  | length" 2>/dev/null) || DONE=0
+          [ -z "$DONE" ] && DONE=0
+
+          echo "Aaj ke successful runs: $DONE"
+          if [ "$DONE" -gt 0 ]; then
+            echo "run=no" >> "$GITHUB_OUTPUT"
+            echo "::notice::Aaj ka mail already ja chuka hai - ye backup slot skip."
+          else
+            echo "run=yes" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Code lao
+        if: steps.guard.outputs.run == 'yes'
         uses: actions/checkout@v4
 
       - name: Python setup karo
+        if: steps.guard.outputs.run == 'yes'
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: pip
 
       - name: Library install karo
+        if: steps.guard.outputs.run == 'yes'
         run: pip install -r requirements.txt
 
       - name: Report banao aur email bhejo
+        if: steps.guard.outputs.run == 'yes'
         env:
           MY_EMAIL: ${{ secrets.MY_EMAIL }}
           MY_APP_PASSWORD: ${{ secrets.MY_APP_PASSWORD }}

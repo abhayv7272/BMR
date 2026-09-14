@@ -562,7 +562,16 @@ if watchlist:
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+
+# GitHub ka runner UTC pe chalta hai. Isliye har jagah India time force karo,
+# warna 6:30 PM UTC ke baad report pe PICHLI date chhap jati hai.
+IST = timezone(timedelta(hours=5, minutes=30))
+
+
+def now_ist():
+    """Hamesha Asia/Kolkata ka current time."""
+    return datetime.now(IST)
 
 def export_to_excel(results, regime_info, universe_label="NSE Top 1000"):
     wb = openpyxl.Workbook()
@@ -610,7 +619,7 @@ def export_to_excel(results, regime_info, universe_label="NSE Top 1000"):
     ws1['A1'].font = font_title; ws1['A1'].fill = fill_navy; ws1['A1'].alignment = align_center
     ws1.row_dimensions[1].height = 36
 
-    today_str = datetime.now().strftime("%d %b %Y, %I:%M %p")
+    today_str = now_ist().strftime("%d %b %Y, %I:%M %p")
     ws1.merge_cells('A2:T2')
     regime_txt = "BULLISH (Safe to Swing Trade)" if regime_info.get('is_bull_market') else "CORRECTION (Caution Recommended)"
     ws1['A2'] = f"Generated on: {today_str} | Universe: {universe_label} | Nifty 50 Status: {regime_txt} (CMP: ₹{regime_info.get('cmp', 0):,.2f})"
@@ -812,7 +821,7 @@ def export_to_excel(results, regime_info, universe_label="NSE Top 1000"):
                 if len(val_str) > max_len: max_len = len(val_str)
             ws.column_dimensions[col_letter].width = max(max_len + 4, 13)
 
-    filename = f"BMR_Trinity_NSE_Screener_Report_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
+    filename = f"BMR_Trinity_NSE_Screener_Report_{now_ist().strftime('%Y%m%d_%H%M')}.xlsx"
     wb.save(filename)
     return filename
 
@@ -840,7 +849,9 @@ def build_html_report(results, regime_info, universe_label):
     openpos = [t for t in tracked if t.get('is_open')]
     ultra = [s for s in actionable if s.get('tier') == 'ULTRA']
     std = [s for s in actionable if s.get('tier') != 'ULTRA']
-    date_str = datetime.now().strftime("%A, %d %B %Y")
+    date_str = now_ist().strftime("%A, %d %B %Y")
+    # Jis waqt report actually bani, wahi dikhao (pehle "6:00 PM IST" hardcoded tha)
+    sent_str = now_ist().strftime("%I:%M %p IST").lstrip("0")
 
     is_bull = regime_info.get('is_bull_market', False)
     regime_txt = "BULL MARKET" if is_bull else "CORRECTION"
@@ -951,7 +962,7 @@ def build_html_report(results, regime_info, universe_label):
 <tr><td style="background-color:#111827;padding:28px 26px 20px 26px;border-left:1px solid #232C42;border-right:1px solid #232C42;">
   <div style="font-size:12px;letter-spacing:3px;color:#F0B90B;font-weight:bold;">● BMR TRINITY SWING SCREENER</div>
   <div style="font-size:28px;font-weight:800;color:#FFFFFF;margin:8px 0 4px 0;">Daily Action Report</div>
-  <div style="font-size:13px;color:#8A94A6;">{date_str} &nbsp;•&nbsp; {E(universe_label)} &nbsp;•&nbsp; 6:00 PM IST</div>
+  <div style="font-size:13px;color:#8A94A6;">{date_str} &nbsp;•&nbsp; {E(universe_label)} &nbsp;•&nbsp; {sent_str}</div>
   <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:16px;"><tr>
     <td width="32%" align="center" style="background-color:{regime_bg};border:1px solid {regime_color};border-radius:8px;padding:10px;">
       <div style="font-size:10px;color:#8A94A6;letter-spacing:1px;">NIFTY REGIME</div>
@@ -1069,7 +1080,7 @@ if email_from and app_password:
     n_ex = sum(1 for t in results.get('recent', []) if t.get('fresh_exit'))
     n_op = sum(1 for t in results.get('recent', []) if t.get('is_open'))
     n_ultra = sum(1 for s in results.get('actionable', []) if s.get('tier')=='ULTRA')
-    msg["Subject"] = f"📈 BMR: {n_ex} EXIT + {n_op} Open + {n_act} New ({n_ultra}💎) + {n_wl} Radar | {datetime.now().strftime('%d-%b-%Y')}"
+    msg["Subject"] = f"📈 BMR: {n_ex} EXIT + {n_op} Open + {n_act} New ({n_ultra}💎) + {n_wl} Radar | {now_ist().strftime('%d-%b-%Y')}"
 
     msg.attach(MIMEText(html_report, "html", "utf-8"))
 
