@@ -3,6 +3,21 @@ Logic 100% same as Colab notebook. Sends stunning HTML email + Excel attachment.
 """
 import os
 import time
+from datetime import datetime, timedelta, timezone
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:  # Python < 3.9 fallback
+    ZoneInfo = None
+
+# GitHub runner UTC pe chalta hai - data freshness checks ke liye bhi IST chahiye,
+# isliye ye helpers file ke top par hain (pehle sirf Excel section me the, jisse
+# data-integrity layer ko now_ist() milta hi nahi tha).
+IST = ZoneInfo("Asia/Kolkata") if ZoneInfo else timezone(timedelta(hours=5, minutes=30))
+
+
+def now_ist():
+    """Hamesha Asia/Kolkata ka current time."""
+    return datetime.now(IST)
 
 
 # ============ CONFIG ============
@@ -190,8 +205,12 @@ def rank_candidates_by_turnover(cands, top_n, chunk_size=100, period="1mo", look
                     continue
                 if isinstance(sub.columns, pd.MultiIndex):
                     sub.columns = sub.columns.get_level_values(0)
+                sub, _ = drop_incomplete_last_bar(sub, t)
+                sub, _issue = sanitize_ohlcv(sub, t)
+                if _issue is not None:
+                    continue
                 sub = sub.dropna()
-                if sub.empty or 'Close' not in sub or 'Volume' not in sub:
+                if sub.empty:
                     continue
                 tv = (sub['Close'] * sub['Volume']).tail(lookback).mean()
                 if np.isfinite(tv) and tv > 0:
@@ -317,6 +336,91 @@ def calculate_benchmark_regime(nifty_df):
     }
 
 print("✅ Indicators Engine compiled with ddof=0 standard deviation parity!")
+
+
+# ============ DATA INTEGRITY LAYER ============
+# Ye layer sirf INVALID data ko reject/flag karta hai - signal logic ko chhoota
+# nahi. Iske bina Yahoo ka aadha-adhoora ya corrupt response chupchaap report me
+# chala jata tha (diagnosis me ye cases reproduce hue the).
+REQUIRED_OHLCV = ('Open', 'High', 'Low', 'Close', 'Volume')
+MARKET_CLOSE_IST = (15, 35)      # NSE 15:30 close + 5 min settle
+
+
+def _today_ist():
+    return now_ist().date()
+
+
+def expected_session_date():
+    """Aakhri COMPLETED NSE session (IST). Market khula ho to kal wala."""
+    now = now_ist()
+    d = now.date()
+    if (now.hour, now.minute) < MARKET_CLOSE_IST:
+        d = d - timedelta(days=1)
+    while d.weekday() >= 5:          # Sat/Sun chhod do
+        d = d - timedelta(days=1)
+    return d
+
+
+def drop_incomplete_last_bar(df, tag=''):
+    """Aaj ki adhoori (intraday) candle hatao.
+
+    Yahoo market khula hone par aaj ka partial bar deta hai. Us par signal banana
+    = false signal. Rule: agar last bar aaj ka hai aur IST 15:35 se pehle hai, to
+    us bar ko chhod do (aur caller ko batao ki intraday mode tha)."""
+    try:
+        if df is None or len(df) == 0:
+            return df, False
+        now = now_ist()
+        last = df.index[-1]
+        last_date = last.date() if hasattr(last, 'date') else last
+        if last_date == now.date() and (now.hour, now.minute) < MARKET_CLOSE_IST:
+            print(f"[!] {tag or 'data'}: aakhri bar {last_date} adhoora hai (abhi {now.strftime('%H:%M')} IST, "
+                  f"market {MARKET_CLOSE_IST[0]}:{MARKET_CLOSE_IST[1]} ke baad band hota hai). "
+                  f"Wo bar hata diya - signals pichhle complete session par.")
+            return df.iloc[:-1], True
+    except Exception:
+        pass
+    return df, False
+
+
+def sanitize_ohlcv(df, tag=''):
+    """Common OHLCV problems fix/flag karo. Returns (df, issue) - issue None = OK."""
+    if df is None or len(df) == 0:
+        return None, 'empty'
+    missing = [c for c in REQUIRED_OHLCV if c not in df.columns]
+    if missing:
+        return None, f"missing_columns:{','.join(missing)}"
+    if df.index.duplicated().any():
+        df = df[~df.index.duplicated(keep='last')]
+    df = df.dropna(subset=['Close', 'Open', 'High', 'Low'])
+    if len(df) == 0:
+        return None, 'empty_after_nan'
+    bad = df[(df['Close'] <= 0) | (df['Open'] <= 0) | (df['High'] <= 0) | (df['Low'] <= 0)
+             | (df['High'] < df['Low']) | (df['Volume'] < 0)]
+    if len(bad) > 0:
+        return None, f"bad_prices:{len(bad)}bars"
+    return df, None
+
+
+def load_benchmark():
+    """NIFTY benchmark: validate karke load karo. Returns (df_or_None, error_str)."""
+    try:
+        nifty = yf_download_retry(BENCHMARK_TICKER, period="1y", progress=False)
+    except Exception as exc:
+        return None, f"download failed: {type(exc).__name__}: {str(exc)[:120]}"
+    if nifty is None or len(nifty) == 0:
+        return None, 'empty response (Yahoo ne kuch nahi diya)'
+    if isinstance(nifty.columns, pd.MultiIndex):
+        nifty.columns = nifty.columns.get_level_values(0)
+    if 'Close' not in nifty.columns:
+        return None, f"Close column missing (columns: {list(nifty.columns)[:8]})"
+    nifty, _intraday = drop_incomplete_last_bar(nifty, 'benchmark')
+    nifty = nifty[~nifty.index.duplicated(keep='last')]
+    nifty = nifty.dropna(subset=['Close'])
+    nifty = nifty[nifty['Close'] > 0]
+    if len(nifty) < 210:
+        return None, f"only {len(nifty)} valid bars (200-EMA ke liye >=210 chahiye)"
+    return nifty, None
 
 
 # ============ SCREENER ENGINE ============
@@ -557,10 +661,25 @@ def shadow_promotion_review(shadow_stats, regime_info, max_new_signals_per_day=5
 
 def run_screener(universe_df, capital=500000, risk_pct=1.0):
     print(f"[*] Fetching benchmark data ({BENCHMARK_TICKER})...")
-    nifty = yf_download_retry(BENCHMARK_TICKER, period="1y", progress=False)
-    if isinstance(nifty.columns, pd.MultiIndex):
-        nifty.columns = nifty.columns.get_level_values(0)
-    regime = calculate_benchmark_regime(nifty)
+    nifty, bench_err = load_benchmark()
+    BENCHMARK_ERROR = bench_err
+    if nifty is None:
+        # Pehle yahan crash hota tha (KeyError) ya NaN regime aata tha. Ab saaf
+        # warning + neutral regime: RS filter neutral ho jata hai, report par
+        # badi warning lagti hai. Signal add nahi hote - sirf fail-safe.
+        print(f"[!!] BENCHMARK DATA PROBLEM: {bench_err}")
+        print("[!!] Regime NEUTRAL maana gaya hai (RS filter neutral). Report par warning lagegi.")
+        _empty = pd.DataFrame({'Close': [100.0] * 250},
+                              index=pd.bdate_range(end=_today_ist(), periods=250))
+        regime = {'cmp': float('nan'), 'ema50': float('nan'), 'ema200': float('nan'),
+                  'is_bull_market': False, 'nifty_30d_return': 0.0,
+                  'valid': False, 'error': bench_err}
+        nifty = _empty
+    else:
+        regime = calculate_benchmark_regime(nifty)
+        regime['valid'] = True
+        regime['error'] = None
+    BENCH_LAST_BAR = nifty.index[-1]
 
     regime_desc = "BULL MARKET (Safe to Swing Trade)" if regime['is_bull_market'] else "CORRECTION (Caution Recommended)"
     _nc = nifty['Close']
@@ -621,6 +740,15 @@ def run_screener(universe_df, capital=500000, risk_pct=1.0):
         'tickers_insufficient_history': 0,
         'tickers_nan_indicators': 0,
         'tickers_calc_error': 0,
+        'tickers_missing_columns': 0,
+        'tickers_bad_prices': 0,
+        'tickers_empty_after_nan': 0,
+        'tickers_duplicate_dates_fixed': 0,
+        'tickers_future_bar': 0,
+        'contract_issues': [],
+        'benchmark_ok': True,
+        'benchmark_error': None,
+        'intraday_bar_dropped': 0,
         'ticker_error_samples': [],
         'latest_bar_nan_close': 0,
         'stale_tickers': 0,
@@ -645,6 +773,21 @@ def run_screener(universe_df, capital=500000, risk_pct=1.0):
         diag['market_date'] = (_bench_last.date() if hasattr(_bench_last, 'date') else _bench_last)
     except Exception:
         diag['market_date'] = None
+    diag['benchmark_ok'] = bool(regime.get('valid', True))
+    diag['benchmark_error'] = regime.get('error')
+    if not diag['benchmark_ok']:
+        diag['market_date'] = None      # synthetic df ki date report me nahi dikhni chahiye
+    _exp = expected_session_date()
+    diag['expected_session'] = str(_exp)
+    _bl = diag.get('market_date')
+    diag['benchmark_lag_sessions'] = 0
+    if _bl:
+        _d0 = _bl if not hasattr(_bl, 'toordinal') else _bl
+        try:
+            _lag = (_exp - (pd.Timestamp(_bl).date())).days
+            diag['benchmark_lag_sessions'] = max(int(_lag), 0)
+        except Exception:
+            diag['benchmark_lag_sessions'] = 0
 
     for c_i, chunk in enumerate(chunks, 1):
         print(f"[*] Scanning Batch {c_i}/{len(chunks)} ({len(chunk)} stocks)...")
@@ -680,23 +823,47 @@ def run_screener(universe_df, capital=500000, risk_pct=1.0):
                 if len(df) and pd.isna(df['Close'].iloc[-1]):
                     diag['latest_bar_nan_close'] += 1
 
-                if len(df.dropna()) < 120:
-                    diag['tickers_insufficient_history'] += 1
+                # DATA INTEGRITY (hard diagnosis ke findings):
+                #  - adhoori intraday candle (market khula ho) -> hatao
+                #  - missing Volume column / zero ya negative price / High<Low
+                #  - duplicate timestamps
+                _dupes = int(df.index.duplicated().sum())
+                if _dupes:
+                    diag['tickers_duplicate_dates_fixed'] += 1
+                df, _intraday = drop_incomplete_last_bar(df, ticker)
+                if _intraday:
+                    diag['intraday_bar_dropped'] += 1
+                df, _issue = sanitize_ohlcv(df, ticker)
+                if _issue is not None:
+                    if _issue.startswith('missing_columns'):
+                        diag['tickers_missing_columns'] += 1
+                    elif _issue.startswith('bad_prices'):
+                        diag['tickers_bad_prices'] += 1
+                    else:
+                        diag['tickers_empty_after_nan'] += 1
+                    if len(diag['contract_issues']) < 8:
+                        diag['contract_issues'].append(f"{ticker}: {_issue}")
                     continue
-                df = df.dropna()
                 if isinstance(df.columns, pd.MultiIndex):
                     df.columns = df.columns.get_level_values(0)
 
+                if len(df) < 120:
+                    diag['tickers_insufficient_history'] += 1
+                    continue
+
+                _exp_session = expected_session_date()
                 # Data freshness: is ticker ka last candle market date se peeche hai?
                 try:
                     _td = df.index[-1]
                     _td = _td.date() if hasattr(_td, 'date') else _td
                     if diag['data_as_of'] is None or _td > diag['data_as_of']:
                         diag['data_as_of'] = _td
-                    if diag['market_date'] is not None and _td < diag['market_date']:
+                    if _exp_session is not None and _td < _exp_session:
                         diag['stale_tickers'] += 1
                         if len(diag['stale_ticker_samples']) < 5:
                             diag['stale_ticker_samples'].append(f"{ticker}@{_td}")
+                    elif _exp_session is not None and _td > _exp_session:
+                        diag['tickers_future_bar'] += 1
                 except Exception:
                     pass
 
@@ -966,6 +1133,17 @@ def run_screener(universe_df, capital=500000, risk_pct=1.0):
                 continue
 
     rank_order = {'A+': 3, 'A': 2, 'A-': 1}
+    # FAIL-SAFE: benchmark valid nahi to RS filter/regime bharosemand nahi hai.
+    # Aise case me naye entry signals suppress - radar/tracker diagnostics ke liye
+    # rehte hain, par koi galat "buy" report me nahi jata.
+    if not diag.get('benchmark_ok', True) and actionable_signals:
+        diag['actionable_suppressed'] = len(actionable_signals)
+        print(f"[!!] Benchmark unavailable -> {len(actionable_signals)} actionable signal(s) SUPPRESSED "
+              f"(regime/RS verify nahi ho sakta). Radar aur tracker as-is rahenge.")
+        actionable_signals = []
+    else:
+        diag['actionable_suppressed'] = 0
+
     actionable_signals.sort(key=lambda x: (rank_order.get(x['rank'], 0), x['rr_ratio']), reverse=True)
     watchlist_candidates.sort(key=lambda x: x['dist_to_bb_low_pct'])
     recent_signals.sort(key=lambda x: x['days_ago'])
@@ -1034,6 +1212,14 @@ print(f"  Insufficient history (<120)   : {_D.get('tickers_insufficient_history'
 print(f"  NaN indicators                : {_D.get('tickers_nan_indicators')}")
 print(f"  Calculation errors            : {_D.get('tickers_calc_error')}")
 print(f"  Latest bar had NaN close      : {_D.get('latest_bar_nan_close')}  (Yahoo late-bar symptom)")
+print(f"  Adhoori intraday bars hataye  : {_D.get('intraday_bar_dropped')}  (market khula tha)")
+print(f"  Missing columns               : {_D.get('tickers_missing_columns')}  {(_D.get('contract_issues') or [''])[0]}")
+print(f"  Bad prices (0/neg/H<L)        : {_D.get('tickers_bad_prices')}")
+print(f"  Duplicate dates fixed         : {_D.get('tickers_duplicate_dates_fixed')}")
+print(f"  Future-dated bars             : {_D.get('tickers_future_bar')}")
+print(f"  Expected session              : {_D.get('expected_session')}")
+print(f"  Benchmark (NIFTY)             : {'OK' if _D.get('benchmark_ok') else 'PROBLEM -> ' + str(_D.get('benchmark_error'))}"
+      f"   (lag {_D.get('benchmark_lag_sessions', 0)} session(s))")
 print(f"  Stale tickers (older candle)  : {_D.get('stale_tickers')} {_D.get('stale_ticker_samples') or ''}")
 print(f"  Batches failed                : {len(_D.get('batches_failed', []))}")
 for _bf in _D.get('batches_failed', []):
@@ -1078,21 +1264,7 @@ if watchlist:
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
-from datetime import datetime, timedelta, timezone
-try:
-    from zoneinfo import ZoneInfo
-except ImportError:  # Python < 3.9 fallback
-    ZoneInfo = None
-
-# GitHub runner UTC pe chalta hai. Isliye har jagah India time force karo,
-# warna UTC date/time mail aur Excel report me galat chhap sakta hai.
-# India = Asia/Kolkata (UTC/GMT +05:30, no DST).
-IST = ZoneInfo("Asia/Kolkata") if ZoneInfo else timezone(timedelta(hours=5, minutes=30))
-
-
-def now_ist():
-    """Hamesha Asia/Kolkata ka current time."""
-    return datetime.now(IST)
+# (IST / now_ist neeche nahi - file ke top par define hain)
 
 def export_to_excel(results, regime_info, universe_label="NSE Top 1000"):
     wb = openpyxl.Workbook()
@@ -1337,6 +1509,15 @@ def export_to_excel(results, regime_info, universe_label="NSE Top 1000"):
         ("Calculation errors", _D.get('tickers_calc_error', 0), "Pehle chupchaap skip hote the (ab log hote hain)"),
         ("Latest bar had NaN close", _D.get('latest_bar_nan_close', 0), "Yahoo late-bar lag: screener purani candle par chal raha ho sakta hai"),
         ("Stale tickers (older candle)", _D.get('stale_tickers', 0), f"Latest close missing. e.g. {', '.join(_D.get('stale_ticker_samples', [])[:3]) or '-'}"),
+        ("Benchmark (NIFTY) status", "OK" if _D.get('benchmark_ok', True) else f"PROBLEM: {_D.get('benchmark_error')}", "Regime/RS filter ka base - fail ho to report par warning"),
+        ("Entry signals suppressed", _D.get('actionable_suppressed', 0), "Benchmark invalid tha to naye signals nahi diye (fail-safe)"),
+        ("Benchmark lag (sessions)", _D.get('benchmark_lag_sessions', 0), "NIFTY ka aakhri bar expected session se kitna peeche hai"),
+        ("Expected session", str(_D.get('expected_session')), "Aakhri completed NSE session (IST ke hisaab se)"),
+        ("Adhoori intraday bars hataye", _D.get('intraday_bar_dropped', 0), "Market khula tha - partial candle par signal nahi"),
+        ("Missing columns", _D.get('tickers_missing_columns', 0), "Pehle chupchaap skip (e.g. Volume column hi nahi)"),
+        ("Bad prices (0/neg/H<L)", _D.get('tickers_bad_prices', 0), "Corrupt OHLC - indicator galat bante"),
+        ("Duplicate dates fixed", _D.get('tickers_duplicate_dates_fixed', 0), "Same timestamp do baar aaya tha"),
+        ("Future-dated bars", _D.get('tickers_future_bar', 0), "Benchmark se aage ki candle (timezone/Yahoo issue)"),
         ("Batches failed", len(_bff), (f"{sum(b.get('stocks', 0) for b in _bff)} stocks lost" if _bff else "All download batches OK")),
         ("Duplicates skipped", ", ".join(_D.get('duplicates_skipped', [])) or "none", "Catalog me same symbol do baar tha"),
         ("Universe requested / unique", f"{_D.get('universe_requested', 0)} / {_D.get('universe_unique', 0)}", "Dupes hatane ke baad ka count"),
@@ -1549,6 +1730,24 @@ def build_html_report(results, regime_info, universe_label):
     regime_color = "#16C784" if is_bull else "#EA3943"
     regime_bg = "#0B2E23" if is_bull else "#3A1215"
 
+    _warn_bits = []
+    if not _D.get('benchmark_ok', True):
+        _warn_bits.append(f"⚠ NIFTY benchmark data problem: {E(str(_D.get('benchmark_error')))} — "
+                          f"NEW ENTRY SIGNALS SUPPRESSED ({_D.get('actionable_suppressed', 0)}), radar/tracker sirf reference.")
+    if _D.get('benchmark_ok', True) and _D.get('benchmark_lag_sessions', 0):
+        _warn_bits.append(f"⚠ NIFTY benchmark {_D.get('benchmark_lag_sessions')} session(s) peeche hai (expected {_D.get('expected_session')}) — RS filter thoda stale ho sakta hai.")
+    if _D.get('tickers_future_bar', 0):
+        _warn_bits.append(f"⚠ {_D.get('tickers_future_bar')} stocks ki candle expected session se aage hai (timezone/Yahoo issue).")
+    if _D.get('intraday_bar_dropped', 0):
+        _warn_bits.append(f"⚠ {_D.get('intraday_bar_dropped')} stocks ka adhoora intraday bar hataya gaya (report complete session par hai).")
+    if _D.get('tickers_bad_prices', 0) or _D.get('tickers_missing_columns', 0):
+        _warn_bits.append(f"⚠ {_D.get('tickers_bad_prices', 0)} bad-price + {_D.get('tickers_missing_columns', 0)} missing-column tickers skip hue.")
+    data_warning_html = ""
+    if _warn_bits:
+        data_warning_html = ('<tr><td style="background-color:#3A1215;padding:12px 26px;border-left:1px solid #EA3943;'
+                             'border-right:1px solid #EA3943;font-size:12px;color:#FFD1D4;font-weight:600;">'
+                             + '<br>'.join(_warn_bits) + '</td></tr>')
+
     # ---- 1. EXIT ALERTS ----
     ex_rows = ""
     for t in fresh:
@@ -1650,6 +1849,7 @@ def build_html_report(results, regime_info, universe_label):
 <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#0B0E14;padding:24px 12px;"><tr><td align="center">
 <table width="640" cellpadding="0" cellspacing="0" style="max-width:640px;">
 <tr><td height="4" style="background-color:#F0B90B;border-radius:8px 8px 0 0;font-size:0;">&nbsp;</td></tr>
+{data_warning_html}
 <tr><td style="background-color:#111827;padding:28px 26px 20px 26px;border-left:1px solid #232C42;border-right:1px solid #232C42;">
   <div style="font-size:12px;letter-spacing:3px;color:#F0B90B;font-weight:bold;">● BMR TRINITY SWING SCREENER</div>
   <div style="font-size:28px;font-weight:800;color:#FFFFFF;margin:8px 0 4px 0;">Daily Action Report</div>
