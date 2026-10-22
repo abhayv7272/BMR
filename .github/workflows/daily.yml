@@ -44,6 +44,10 @@ jobs:
     runs-on: ubuntu-latest
     env:
       TZ: Asia/Kolkata
+      # Scan universe size. 1500 = embedded top-1000 + best 500 extras
+      # (extras NSE ke live list se aate hain, turnover se ranked).
+      # Rollback chahiye to yahan 1000 kar dein - baaki kuch nahi badlega.
+      BMR_UNIVERSE_SIZE: "1500"
 
     steps:
       - name: Aaj ka mail already gaya kya? (duplicate rokna)
@@ -139,7 +143,7 @@ jobs:
         env:
           MY_EMAIL: ${{ secrets.MY_EMAIL }}
           MY_APP_PASSWORD: ${{ secrets.MY_APP_PASSWORD }}
-        timeout-minutes: 25
+        timeout-minutes: 30
         run: python -u main.py
 
       - name: Upload report files (even if email is not visible)
