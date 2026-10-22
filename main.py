@@ -41,7 +41,11 @@ import pandas as pd
 # Embedded master dataset of top 1,000 NSE liquid stocks (Self-contained)
 EMBEDDED_DATA_B64 = "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"
 
+UNIVERSE_DUPLICATES = []  # diagnostics: skipped duplicate symbols (Phase 1)
+
+
 def get_universe_df(universe_type="top1000"):
+    global UNIVERSE_DUPLICATES
     raw_csv = gzip.decompress(base64.b64decode(EMBEDDED_DATA_B64)).decode('utf-8')
     df = pd.read_csv(io.StringIO(raw_csv))
 
@@ -53,6 +57,15 @@ def get_universe_df(universe_type="top1000"):
         df['industry'] = df['Industry']
 
     df['Yahoo_Ticker'] = df['symbol'].astype(str) + ".NS"
+
+    # Phase 1 fix: catalog me 2 symbols duplicate the (INOXGREEN, TRIVENI). Same
+    # ticker do baar scan hone se report me ek hi stock ki duplicate row aa sakti
+    # thi. Pehla occurrence rakho, baaki skip karo (observation only - koi unique
+    # ticker nahi hatta).
+    _dups = df['symbol'][df['symbol'].duplicated()].astype(str).tolist()
+    if _dups:
+        UNIVERSE_DUPLICATES = _dups
+        df = df.drop_duplicates(subset='symbol', keep='first').reset_index(drop=True)
 
     if universe_type == "top100":
         return df.iloc[:100].copy().reset_index(drop=True)
@@ -235,6 +248,142 @@ def tracker_status(legs, entry, cmp_now, entry_idx, dates, plan='PARTIAL', t1_to
             'eff_sl': eff_sl, 't1_touched': t1_touched}
 
 
+# ============ PHASE 2: SHADOW TESTING (observation only) ============
+# Ye block kabhi bhi actionable/email list ko nahi chhoota. Sirf ye batata hai ki
+# agar filters loosen karein to kitne EXTRA signals aate, aur unka forward result
+# (T1/SL/TIME) kya hota. Phase 3 ka promotion decision isi data se lena hai.
+# V0 = aaj ka behaviour (baseline, comparison ke liye).
+SHADOW_VARIANTS = {
+    'V0_current':      dict(label='V0 baseline (aaj ka code)',        bb_slope_thr=0.012, ema50_guard=True,  macd_gate=True),
+    'V1_bb3':          dict(label='V1 bb slope -1.2% -> -3.0%',       bb_slope_thr=0.030, ema50_guard=True,  macd_gate=True),
+    'V2_bb3_noslope':  dict(label='V2 bb -3.0% + EMA50 guard OFF',    bb_slope_thr=0.030, ema50_guard=False, macd_gate=True),
+    'V3_nomacd':       dict(label='V3 MACD turn gate OFF',            bb_slope_thr=0.012, ema50_guard=True,  macd_gate=False),
+}
+
+
+def _gate_stack(vals, idx, variant, nifty_ret30):
+    """Trigger check with (optional) loosened thresholds. Pure function.
+
+    Same rules as the live screener, only the variant knobs differ, so the
+    comparison between shadow variants and V0 is apples-to-apples."""
+    if idx < 100:
+        return False
+    c, o, h, l = vals['c'], vals['o'], vals['h'], vals['l']
+    lb, bls, rsi, hist = vals['lb'], vals['bls'], vals['rsi'], vals['hist']
+    atr, e50, e200, ret30 = vals['atr'], vals['e50'], vals['e200'], vals['ret30']
+    if np.isnan(atr[idx]) or atr[idx] <= 0 or np.isnan(e200[idx]):
+        return False
+    if not (c[idx] > e200[idx] and e50[idx] > e200[idx]):
+        return False
+    if variant['ema50_guard'] and e50[idx] < e50[idx - 5] * 0.998:
+        return False
+    if not any(l[idx - k] <= lb[idx - k] * 1.005 for k in range(2)):
+        return False
+    if not (np.isnan(bls[idx]) or bls[idx] >= -variant['bb_slope_thr']):
+        return False
+    if not any(rsi[idx - k] <= 40 for k in range(3)):
+        return False
+    if not (rsi[idx] > rsi[idx - 1] and rsi[idx] >= 28):
+        return False
+    if variant['macd_gate'] and not (hist[idx] > hist[idx - 1]):
+        return False
+    if not (c[idx] > lb[idx] and c[idx] > o[idx]):
+        return False
+    lower_wick = min(o[idx], c[idx]) - l[idx]
+    candle_range = h[idx] - l[idx] + 1e-6
+    if not ((lower_wick / candle_range >= 0.20) or (c[idx] >= (h[idx] + l[idx]) * 0.50) or (c[idx] > c[idx - 1])):
+        return False
+    if not np.isnan(ret30[idx]) and ret30[idx] < nifty_ret30 - 0.025:
+        return False
+    sl = min(l[idx - 2], l[idx - 1], l[idx]) - (1.3 * atr[idx])
+    risk = (c[idx] - sl) / c[idx]
+    if not (0.012 <= risk <= 0.080):
+        return False
+    return True
+
+
+def _shadow_signal_levels(vals, idx, nifty_ret30):
+    """Same maths as the live signal, used for the shadow sheet's price columns."""
+    c, o, h, l = vals['c'], vals['o'], vals['h'], vals['l']
+    atr, ub, rsi, bls, e50 = vals['atr'], vals['ub'], vals['rsi'], vals['bls'], vals['e50']
+    entry = float(c[idx])
+    sl = round(min(l[idx - 2], l[idx - 1], l[idx]) - (1.3 * atr[idx]), 2)
+    t1 = round(entry * (1.0 + TARGET_1_GAIN_PCT), 2)
+    t2 = round(max(float(ub[idx]), entry * T2_MULT), 2)
+    return dict(entry=entry, sl=sl, t1=t1, t2=t2, rsi=round(float(rsi[idx]), 1),
+                bb_slope=round(float(bls[idx]) * 100.0, 2) if not np.isnan(bls[idx]) else None,
+                ema50_ok=bool(e50[idx] >= e50[idx - 5] * 0.998))
+
+
+def _shadow_retro(vals, last_idx, nifty_ret30, variant, plan='FULL_T1'):
+    """Last TRACK_DAYS sessions ka forward-test (T1/SL/TIME/OPEN).
+
+    Entry = signal ke agle din ka open, exit = existing simulate_exits engine.
+    Sirf statistics ke liye - koi trade ya email nahi."""
+    out = []
+    c, o, h, l = vals['c'], vals['o'], vals['h'], vals['l']
+    first = max(101, last_idx - TRACK_DAYS)
+    for idx in range(first, last_idx):
+        _mom = nifty_ret30(vals['dates'][idx].date()) if callable(nifty_ret30) else nifty_ret30
+        if not _gate_stack(vals, idx, variant, _mom):
+            continue
+        e_idx = idx + 1
+        entry = float(o[e_idx])
+        sl = round(min(l[idx - 2], l[idx - 1], l[idx]) - (1.3 * vals['atr'][idx]), 2)
+        t1 = round(entry * (1.0 + TARGET_1_GAIN_PCT), 2)
+        t2 = round(max(float(vals['ub'][idx]), entry * T2_MULT), 2)
+        legs, touched = simulate_exits(o, h, l, c, e_idx, last_idx, entry, sl, t1, t2, plan=plan)
+        info = tracker_status(legs, entry, float(c[last_idx]), e_idx, vals['dates'], plan=plan, t1_touched=touched)
+        out.append(info['status'])
+    return out
+
+
+def _shadow_stats(statuses):
+    """Status list -> win/sl/time/open breakdown."""
+    n = len(statuses)
+    win = sum(1 for s in statuses if ('T1' in s or 'T2' in s))
+    sl = sum(1 for s in statuses if 'SL' in s)
+    t_open = sum(1 for s in statuses if s.startswith('OPEN'))
+    time_up = n - win - sl - t_open
+    return {'signals': n, 'wins': win, 'sl': sl, 'time': time_up, 'open': t_open,
+            'win_rate': round(win / n * 100.0, 1) if n else 0.0,
+            'sl_rate': round(sl / n * 100.0, 1) if n else 0.0}
+
+
+def shadow_promotion_review(shadow_stats, regime_info, max_new_signals_per_day=5):
+    """PHASE 3 gate - kya koi loosened variant promote karne layak hai?
+
+    Promote sirf tab jab teenon criteria pass hon:
+      1. 25-session forward-test me win-rate baseline (V0) se kam na ho
+      2. signal volume cap ke andar ho (max_new_signals_per_day)
+      3. NIFTY regime BULL ho (correction me loosened filters band rahenge)
+    Ye function sirf VERDICT deta hai - khud kuch promote nahi karta."""
+    base = shadow_stats.get('V0_current', {})
+    base_wr = base.get('win_rate', 0.0)
+    reviews = []
+    for key, st in shadow_stats.items():
+        if key == 'V0_current':
+            continue
+        per_day = st.get('signals', 0) / float(TRACK_DAYS) if TRACK_DAYS else 0.0
+        reasons = []
+        if st.get('win_rate', 0.0) < base_wr:
+            reasons.append(f"win-rate {st.get('win_rate', 0):.0f}% < baseline {base_wr:.0f}%")
+        if per_day > max_new_signals_per_day:
+            reasons.append(f"{per_day:.1f} signals/day > cap {max_new_signals_per_day}")
+        if not regime_info.get('is_bull_market', False):
+            reasons.append("regime CORRECTION (only BULL me promote)")
+        reviews.append({
+            'variant': key,
+            'label': SHADOW_VARIANTS[key]['label'],
+            'verdict': 'READY' if not reasons else 'NOT-READY',
+            'reasons': '; '.join(reasons) if reasons else 'all criteria met',
+            'signals': st.get('signals', 0),
+            'win_rate': st.get('win_rate', 0.0),
+            'signals_per_day': round(per_day, 2),
+        })
+    return reviews
+
+
 def run_screener(universe_df, capital=500000, risk_pct=1.0):
     print(f"[*] Fetching benchmark data ({BENCHMARK_TICKER})...")
     nifty = yf_download_retry(BENCHMARK_TICKER, period="1y", progress=False)
@@ -278,12 +427,55 @@ def run_screener(universe_df, capital=500000, risk_pct=1.0):
     watchlist_candidates = []
     recent_signals = []
 
+    # ---- PHASE 1 DIAGNOSTICS (observation only, koi selection change nahi) ----
+    # Har run ye batata hai: kitna data aaya, kahan fail hua, aur "0 signal" ka
+    # karan kaunsa gate tha. Pehle ye sab chupchaap hota tha.
+    diag = {
+        'universe_requested': int(len(universe_df)) + len(UNIVERSE_DUPLICATES),
+        'universe_unique': int(len(universe_df)),
+        'duplicates_skipped': list(UNIVERSE_DUPLICATES),
+        'batches_total': len(chunks),
+        'batches_failed': [],
+        'tickers_requested': len(tickers),
+        'tickers_scanned': 0,
+        'tickers_missing_from_download': 0,
+        'tickers_insufficient_history': 0,
+        'tickers_nan_indicators': 0,
+        'tickers_calc_error': 0,
+        'ticker_error_samples': [],
+        'latest_bar_nan_close': 0,
+        'stale_tickers': 0,
+        'stale_ticker_samples': [],
+        'data_as_of': None,
+        'market_date': None,
+        'reject_first_gate': {},
+        'shadow_today': {k: 0 for k in SHADOW_VARIANTS},
+        'shadow_retro': {k: {'signals': 0, 'wins': 0, 'sl': 0, 'time': 0, 'open': 0,
+                             'win_rate': 0.0, 'sl_rate': 0.0} for k in SHADOW_VARIANTS},
+        'shadow_today_signals': [],
+        'generated_at_ist': None,
+    }
+    _GATE_ORDER = ['ema50_slope', 'rs_vs_nifty', 'bb_lower_pierce', 'bb_slope_ok',
+                   'rsi_oversold', 'rsi_hook', 'macd_turn', 'candle_ok', 'wick_ok']
+
+    def _gate_fail(name):
+        diag['reject_first_gate'][name] = diag['reject_first_gate'].get(name, 0) + 1
+
+    try:
+        _bench_last = nifty.index[-1]
+        diag['market_date'] = (_bench_last.date() if hasattr(_bench_last, 'date') else _bench_last)
+    except Exception:
+        diag['market_date'] = None
+
     for c_i, chunk in enumerate(chunks, 1):
         print(f"[*] Scanning Batch {c_i}/{len(chunks)} ({len(chunk)} stocks)...")
         try:
             data = yf_download_retry(chunk, period="1y", group_by='ticker', progress=False)
         except Exception as e:
             print(f"Error in batch {c_i}: {e}")
+            # PHASE 1 fix: pehle ye batch chupchaap gayab ho jata tha (100 stocks
+            # silently missing, run phir bhi green). Ab report me dikhta hai.
+            diag['batches_failed'].append({'batch': c_i, 'stocks': len(chunk), 'error': str(e)[:200]})
             continue
 
         for ticker in chunk:
@@ -297,11 +489,39 @@ def run_screener(universe_df, capital=500000, risk_pct=1.0):
                     if ticker in data:
                         df = data[ticker].copy()
 
-                if df is None or df.empty or len(df.dropna()) < 120:
+                if df is None or df.empty:
+                    diag['tickers_missing_from_download'] += 1
+                    continue
+
+                # PHASE 1 fix (fresh-bar): Yahoo market close ke baad naye bar me
+                # Close=NaN deta hai. Pehle wo bar dropna() se chupchaap hat jata
+                # tha -> screener kal ki candle par chal raha hota tha, par report
+                # aaj ki date dikhati thi. Ab detect + report hota hai (selection
+                # waisi hi rahti hai, bas "data as of" sach bolta hai).
+                if len(df) and pd.isna(df['Close'].iloc[-1]):
+                    diag['latest_bar_nan_close'] += 1
+
+                if len(df.dropna()) < 120:
+                    diag['tickers_insufficient_history'] += 1
                     continue
                 df = df.dropna()
                 if isinstance(df.columns, pd.MultiIndex):
                     df.columns = df.columns.get_level_values(0)
+
+                # Data freshness: is ticker ka last candle market date se peeche hai?
+                try:
+                    _td = df.index[-1]
+                    _td = _td.date() if hasattr(_td, 'date') else _td
+                    if diag['data_as_of'] is None or _td > diag['data_as_of']:
+                        diag['data_as_of'] = _td
+                    if diag['market_date'] is not None and _td < diag['market_date']:
+                        diag['stale_tickers'] += 1
+                        if len(diag['stale_ticker_samples']) < 5:
+                            diag['stale_ticker_samples'].append(f"{ticker}@{_td}")
+                except Exception:
+                    pass
+
+                diag['tickers_scanned'] += 1
 
                 df = calculate_technical_indicators(df)
                 meta = meta_dict.get(ticker, {'symbol': ticker.replace('.NS', ''), 'name': ticker, 'industry': 'Equities'})
@@ -326,6 +546,7 @@ def run_screener(universe_df, capital=500000, risk_pct=1.0):
                 dates = df.index
 
                 if np.isnan(atr[i]) or atr[i] <= 0 or np.isnan(ema200[i]):
+                    diag['tickers_nan_indicators'] += 1
                     continue
 
                 cmp = c[i]
@@ -357,6 +578,20 @@ def run_screener(universe_df, capital=500000, risk_pct=1.0):
                         candle_range = h[i] - l[i] + 1e-6
                         wick_ok = (lower_wick / candle_range >= 0.20) or (cmp >= (h[i] + l[i]) * 0.50) or (cmp > c[i-1])
 
+                        # PHASE 1 diagnostics: "0 signal kyun?" ka jawab.
+                        # Sabse pehla gate jo block karta hai, wahi count hota hai.
+                        _gate_ok = [
+                            ('ema50_slope', slope_ok), ('rs_vs_nifty', rs_ok),
+                            ('bb_lower_pierce', pierced_lower), ('bb_slope_ok', bb_slope_ok),
+                            ('rsi_oversold', rsi_oversold), ('rsi_hook', rsi_hook),
+                            ('macd_turn', macd_turning), ('candle_ok', candle_ok),
+                            ('wick_ok', wick_ok),
+                        ]
+                        for _gn, _gok in _gate_ok:
+                            if not _gok:
+                                _gate_fail(_gn)
+                                break
+
                         if slope_ok and rs_ok and pierced_lower and bb_slope_ok and rsi_oversold and rsi_hook and macd_turning and (candle_ok and wick_ok):
                             entry_price = cmp
                             recent_swing_low = min(l[i-2], l[i-1], l[i])
@@ -367,6 +602,8 @@ def run_screener(universe_df, capital=500000, risk_pct=1.0):
                                 trade_risk_pct = (risk_per_share / entry_price) * 100.0
 
                                 # Noise Buffer & Loose Stop Filter (1.2% <= risk <= 8.0%)
+                                if not (1.2 <= trade_risk_pct <= 8.0):
+                                    _gate_fail('risk_band')
                                 if 1.2 <= trade_risk_pct <= 8.0:
                                     target_1 = round(entry_price * (1.0 + TARGET_1_GAIN_PCT), 2)
                                     target_2 = round(max(bb_up[i], entry_price * T2_MULT), 2)
@@ -439,6 +676,38 @@ def run_screener(universe_df, capital=500000, risk_pct=1.0):
                             'trigger_condition': "Consolidating at Lower BB Support; Watch for green hook"
                         })
 
+                # --- 2b. PHASE 2 SHADOW TEST (observation only - NEVER actionable) ---
+                try:
+                    _vals = {'c': c, 'o': o, 'h': h, 'l': l, 'lb': bb_low, 'ub': bb_up,
+                             'bls': bb_low_slope, 'rsi': rsi, 'hist': hist, 'atr': atr,
+                             'e50': ema50, 'e200': ema200, 'ret30': ret30, 'dates': dates}
+                    for _vkey, _v in SHADOW_VARIANTS.items():
+                        if _gate_stack(_vals, i, _v, regime['nifty_30d_return']):
+                            diag['shadow_today'][_vkey] += 1
+                            if _vkey != 'V0_current' and _pend is None:
+                                _lvl = _shadow_signal_levels(_vals, i, regime['nifty_30d_return'])
+                                diag['shadow_today_signals'].append({
+                                    'variant': _vkey, 'variant_label': _v['label'],
+                                    'symbol': meta['symbol'], 'name': meta['name'],
+                                    'cmp': round(float(_lvl['entry']), 2),
+                                    'stop_loss': _lvl['sl'], 'target_1': _lvl['t1'], 'target_2': _lvl['t2'],
+                                    'rsi': _lvl['rsi'], 'bb_slope_pct': _lvl['bb_slope'],
+                                    'ema50_ok': _lvl['ema50_ok'],
+                                })
+                        _statuses = _shadow_retro(_vals, i, _nifty_mom_on, _v)
+                        _st = _shadow_stats(_statuses)
+                        _agg = diag['shadow_retro'][_vkey]
+                        for _k in _st:
+                            _agg[_k] = _agg.get(_k, 0) + _st[_k]
+                    # aggregate rates (counts aggregate hue, rates dobara calc)
+                    for _vkey in SHADOW_VARIANTS:
+                        _a = diag['shadow_retro'][_vkey]
+                        _a['win_rate'] = round(_a['wins'] / _a['signals'] * 100.0, 1) if _a['signals'] else 0.0
+                        _a['sl_rate'] = round(_a['sl'] / _a['signals'] * 100.0, 1) if _a['signals'] else 0.0
+                except Exception as _shadow_err:
+                    if len(diag['ticker_error_samples']) < 5:
+                        diag['ticker_error_samples'].append(f"shadow:{ticker}:{type(_shadow_err).__name__}:{_shadow_err}")
+
                 # --- 3. POSITION TRACKER (signals from last TRACK_DAYS, simulated to today) ---
                 _ticker_busy = -1
                 for offset in range(TRACK_DAYS, 0, -1):
@@ -508,7 +777,13 @@ def run_screener(universe_df, capital=500000, risk_pct=1.0):
                     _ticker_busy = legs[-1][0]
                 if _pend is not None and _ticker_busy < i:
                     actionable_signals.append(_pend)
-            except Exception:
+            except Exception as _tick_err:
+                # PHASE 1 fix: pehle yahan `continue` tha - koi bhi error chupchaap
+                # ticker skip kar deta tha aur run green rehta tha.
+                diag['tickers_calc_error'] += 1
+                if len(diag['ticker_error_samples']) < 5:
+                    diag['ticker_error_samples'].append(
+                        f"{ticker}: {type(_tick_err).__name__}: {str(_tick_err)[:160]}")
                 continue
 
     rank_order = {'A+': 3, 'A': 2, 'A-': 1}
@@ -516,10 +791,18 @@ def run_screener(universe_df, capital=500000, risk_pct=1.0):
     watchlist_candidates.sort(key=lambda x: x['dist_to_bb_low_pct'])
     recent_signals.sort(key=lambda x: x['days_ago'])
 
+    # ---- PHASE 1/2 diagnostics ko finalize karo ----
+    diag['data_as_of'] = str(diag['data_as_of']) if diag['data_as_of'] else None
+    diag['market_date'] = str(diag['market_date']) if diag['market_date'] else None
+    diag['generated_at_ist'] = now_ist().strftime('%d-%b-%Y %H:%M IST') if 'now_ist' in globals() else None
+    diag['reject_first_gate'] = dict(sorted(diag['reject_first_gate'].items(), key=lambda kv: -kv[1]))
+    diag['promotion_review'] = shadow_promotion_review(diag['shadow_retro'], regime)
+
     return {
         'actionable': actionable_signals,
         'watchlist': watchlist_candidates,
-        'recent': recent_signals
+        'recent': recent_signals,
+        'diagnostics': diag,
     }, regime
 
 print("✅ Screener Batch Engine compiled with verified 7-fix constraints!")
@@ -546,6 +829,51 @@ n_exit = sum(1 for t in recent if t.get("fresh_exit"))
 print(f"  - Fresh EXIT alerts (T1/T2/SL/TIME)         : {n_exit}")
 n_open = sum(1 for t in recent if t.get("is_open"))
 print(f"  - Open tracked positions                : {n_open}")
+print(f"{'='*85}")
+
+# ---- PHASE 1: WHY ZERO? (data health + gate funnel) ----
+_D = results.get('diagnostics', {})
+print(f"\n{'='*85}")
+print("  DATA HEALTH & SIGNAL FUNNEL (Phase 1 diagnostics)")
+print(f"{'='*85}")
+print(f"  Data as of (last candle)      : {_D.get('data_as_of')}   | benchmark last bar: {_D.get('market_date')}")
+print(f"  Universe requested / unique   : {_D.get('universe_requested')} / {_D.get('universe_unique')}"
+      f"   (duplicates skipped: {_D.get('duplicates_skipped')})")
+print(f"  Tickers requested             : {_D.get('tickers_requested')}")
+print(f"  Tickers scanned               : {_D.get('tickers_scanned')}")
+print(f"  Missing from download         : {_D.get('tickers_missing_from_download')}")
+print(f"  Insufficient history (<120)   : {_D.get('tickers_insufficient_history')}")
+print(f"  NaN indicators                : {_D.get('tickers_nan_indicators')}")
+print(f"  Calculation errors            : {_D.get('tickers_calc_error')}")
+print(f"  Latest bar had NaN close      : {_D.get('latest_bar_nan_close')}  (Yahoo late-bar symptom)")
+print(f"  Stale tickers (older candle)  : {_D.get('stale_tickers')} {_D.get('stale_ticker_samples') or ''}")
+print(f"  Batches failed                : {len(_D.get('batches_failed', []))}")
+for _bf in _D.get('batches_failed', []):
+    print(f"      - batch {_bf['batch']}: {_bf['stocks']} stocks lost -> {_bf['error']}")
+if _D.get('ticker_error_samples'):
+    print(f"  Error samples                 : {_D.get('ticker_error_samples')}")
+print(f"\n  Rejection funnel on latest bar (kaunsa gate block kar raha hai):")
+_rg = _D.get('reject_first_gate', {})
+if _rg:
+    for _k, _v in _rg.items():
+        print(f"      {_k:18s} {_v:5d}")
+else:
+    print("      (koi uptrend stock gate pe fail nahi hua)")
+_tot_rej = sum(_rg.values()) if _rg else 0
+if not actionable and _tot_rej:
+    _top = list(_rg.items())[0]
+    print(f"\n  >> 0 SIGNAL KA KARAN: {_top[0]} ne {_top[1]} stocks block kiye ({_top[1]}/{_tot_rej} = "
+          f"{_top[1]/_tot_rej*100:.0f}% of rejections)")
+
+print(f"\n  PHASE 2 SHADOW TEST (observation only - email me actionable nahi jata):")
+print(f"      {'variant':22s} {'today':>6s} {'25d signals':>12s} {'WINS':>5s} {'SL':>4s} {'OPEN':>5s} {'win%':>6s}")
+for _vk, _v in SHADOW_VARIANTS.items():
+    _st = _D.get('shadow_retro', {}).get(_vk, {})
+    print(f"      {_vk:22s} {_D.get('shadow_today', {}).get(_vk, 0):>6d} {_st.get('signals', 0):>12d}"
+          f" {_st.get('wins', 0):>5d} {_st.get('sl', 0):>4d} {_st.get('open', 0):>5d} {_st.get('win_rate', 0):>5.0f}%")
+print(f"\n  PHASE 3 PROMOTION REVIEW (koi variant auto-promote NAHI hota):")
+for _rv in _D.get('promotion_review', []):
+    print(f"      {_rv['variant']:18s} {_rv['verdict']:10s} {_rv['reasons']}")
 print(f"{'='*85}\n")
 
 if actionable:
@@ -627,7 +955,8 @@ def export_to_excel(results, regime_info, universe_label="NSE Top 1000"):
     today_str = now_ist().strftime("%d %b %Y, %I:%M %p IST").lstrip("0")
     ws1.merge_cells('A2:T2')
     regime_txt = "BULLISH (Safe to Swing Trade)" if regime_info.get('is_bull_market') else "CORRECTION (Caution Recommended)"
-    ws1['A2'] = f"Generated on: {today_str} | Universe: {universe_label} | Nifty 50 Status: {regime_txt} (CMP: ₹{regime_info.get('cmp', 0):,.2f})"
+    _asof = (results.get('diagnostics') or {}).get('data_as_of') or 'n/a'
+    ws1['A2'] = f"Generated on: {today_str} | Data as of: {_asof} | Universe: {universe_label} | Nifty 50 Status: {regime_txt} (CMP: ₹{regime_info.get('cmp', 0):,.2f})"
     ws1['A2'].font = font_subtitle; ws1['A2'].fill = fill_slate; ws1['A2'].alignment = align_center
     ws1.row_dimensions[2].height = 22
 
@@ -794,6 +1123,144 @@ def export_to_excel(results, regime_info, universe_label="NSE Top 1000"):
         elif "CORRECTION" in v: c2.font = font_red; c2.fill = fill_light_red
         ws4.row_dimensions[r_i].height = 22
 
+    # ---- PHASE 1: asli BREADTH + DATA HEALTH (sheet ka naam pehle jhoot bol raha tha) ----
+    _D = results.get('diagnostics', {}) or {}
+    r_b = 4 + len(nifty_rows) + 1
+    ws4.cell(row=r_b, column=1, value="DATA HEALTH & UNIVERSE BREADTH").font = font_header
+    ws4.cell(row=r_b, column=1).fill = fill_slate
+    ws4.cell(row=r_b, column=2, value="Value").font = font_header; ws4.cell(row=r_b, column=2).fill = fill_slate
+    ws4.cell(row=r_b, column=3, value="Why it matters").font = font_header; ws4.cell(row=r_b, column=3).fill = fill_slate
+    _bff = _D.get('batches_failed', [])
+    breadth_rows = [
+        ("Data as of (last candle)", str(_D.get('data_as_of')), "Screener jis candle par chala - report date se match hona chahiye"),
+        ("Benchmark last bar", str(_D.get('market_date')), "Market ka latest completed session"),
+        ("Tickers requested", _D.get('tickers_requested', 0), "Universe size jo download maanga gaya"),
+        ("Tickers scanned", _D.get('tickers_scanned', 0), "Jinpar indicators bane (ideally ~= universe)"),
+        ("Missing from download", _D.get('tickers_missing_from_download', 0), "Yahoo ne data hi nahi diya"),
+        ("Insufficient history (<120 bars)", _D.get('tickers_insufficient_history', 0), "Naye/illiquid stock, indicators nahi ban sakte"),
+        ("NaN indicators", _D.get('tickers_nan_indicators', 0), "ATR/EMA200 blank - skip hue"),
+        ("Calculation errors", _D.get('tickers_calc_error', 0), "Pehle chupchaap skip hote the (ab log hote hain)"),
+        ("Latest bar had NaN close", _D.get('latest_bar_nan_close', 0), "Yahoo late-bar lag: screener purani candle par chal raha ho sakta hai"),
+        ("Stale tickers (older candle)", _D.get('stale_tickers', 0), f"Latest close missing. e.g. {', '.join(_D.get('stale_ticker_samples', [])[:3]) or '-'}"),
+        ("Batches failed", len(_bff), (f"{sum(b.get('stocks', 0) for b in _bff)} stocks lost" if _bff else "All download batches OK")),
+        ("Duplicates skipped", ", ".join(_D.get('duplicates_skipped', [])) or "none", "Catalog me same symbol do baar tha"),
+        ("Universe requested / unique", f"{_D.get('universe_requested', 0)} / {_D.get('universe_unique', 0)}", "Dupes hatane ke baad ka count"),
+    ]
+    for i_b, (k, v, desc) in enumerate(breadth_rows, r_b + 1):
+        c1 = ws4.cell(row=i_b, column=1, value=k); c2 = ws4.cell(row=i_b, column=2, value=v); c3 = ws4.cell(row=i_b, column=3, value=desc)
+        c1.font = font_bold; c1.border = thin_border; c2.font = font_body; c2.border = thin_border; c3.font = font_body; c3.border = thin_border
+        c1.alignment = align_left; c2.alignment = align_center; c3.alignment = align_left
+        if k == "Data as of (last candle)" and str(v) != str(_D.get('market_date')):
+            c2.font = font_red; c2.fill = fill_light_red
+        if k in ("Calculation errors", "Batches failed", "Latest bar had NaN close", "Missing from download") and str(v) not in ("0", "", "none"):
+            c2.font = font_red; c2.fill = fill_light_red
+
+    # ---- PHASE 1: rejection funnel (0 signal ka karan) ----
+    r_f = r_b + len(breadth_rows) + 2
+    ws4.cell(row=r_f, column=1, value="SIGNAL REJECTION FUNNEL (latest candle, uptrend stocks)").font = font_header
+    ws4.cell(row=r_f, column=1).fill = fill_header_amber
+    ws4.cell(row=r_f, column=2, value="Stocks blocked").font = font_header; ws4.cell(row=r_f, column=2).fill = fill_header_amber
+    ws4.cell(row=r_f, column=3, value="Gate ka matlab").font = font_header; ws4.cell(row=r_f, column=3).fill = fill_header_amber
+    _gate_desc = {
+        'ema50_slope': "EMA50 5 din me 0.2% se zyada neeche (trend toot raha)",
+        'rs_vs_nifty': "Stock Nifty se 2.5%+ peeche (relative strength weak)",
+        'bb_lower_pierce': "Lower band touch/pierce nahi hua (setup hi nahi bana)",
+        'bb_slope_ok': "Lower band 3 din me 1.2%+ neeche (falling knife guard)",
+        'rsi_oversold': "RSI 3 din me 40 se neeche nahi gaya",
+        'rsi_hook': "RSI kal se upar nahi (green hook missing)",
+        'macd_turn': "MACD hist abhi turn nahi hua",
+        'candle_ok': "Candle green/band ke upar nahi",
+        'wick_ok': "Lower wick / reclaim confirmation nahi",
+        'risk_band': "SL distance 1.2%-8% band ke bahar",
+    }
+    _rg = _D.get('reject_first_gate', {}) or {}
+    if _rg:
+        for i_f, (k, v) in enumerate(_rg.items(), r_f + 1):
+            c1 = ws4.cell(row=i_f, column=1, value=k); c2 = ws4.cell(row=i_f, column=2, value=v)
+            c3 = ws4.cell(row=i_f, column=3, value=_gate_desc.get(k, ""))
+            c1.font = font_bold; c2.font = font_bold; c3.font = font_body
+            c1.border = thin_border; c2.border = thin_border; c3.border = thin_border
+            c2.alignment = align_center; c1.alignment = align_left; c3.alignment = align_left
+    else:
+        ws4.cell(row=r_f + 1, column=1, value="Koi uptrend stock kisi gate par block nahi hua.").font = font_body
+
+    # ---- PHASE 2: SHADOW TEST (observation only) ----
+    ws6 = wb.create_sheet(title="Shadow (Loosened Filters)")
+    ws6.views.sheetView[0].showGridLines = True
+    ws6.merge_cells('A1:I1')
+    ws6['A1'] = "PHASE 2 - SHADOW TEST: AGAR FILTERS LOOSE KAREIN TO KYA HOTA (OBSERVATION ONLY)"
+    ws6['A1'].font = font_title; ws6['A1'].fill = fill_header_amber; ws6['A1'].alignment = align_center
+    ws6.row_dimensions[1].height = 36
+    ws6.merge_cells('A2:I2')
+    ws6['A2'] = ("Ye signals kabhi email/actionable list me nahi jate. Sirf evidence: 25-session forward-test "
+                 "(entry next open, T1 +2% / SL / 25-session time exit). Phase 3 promote sirf tab jab win-rate "
+                 "baseline se kam na ho + volume cap ke andar ho + NIFTY BULL ho.")
+    ws6['A2'].font = font_subtitle; ws6['A2'].fill = fill_slate; ws6['A2'].alignment = align_center
+    ws6['A2'].alignment = Alignment(horizontal='left', vertical='center', wrap_text=True)
+    ws6.row_dimensions[2].height = 46
+
+    hdr6 = ["Variant", "Aaj ke marginal signals", "25-session signals", "WINS", "SL hits",
+            "TIME exits", "Open now", "Win rate %", "Phase-3 verdict"]
+    for c_i, h in enumerate(hdr6, 1):
+        cell = ws6.cell(row=4, column=c_i, value=h)
+        cell.font = font_header; cell.fill = fill_slate; cell.alignment = align_center; cell.border = thin_border
+    ws6.row_dimensions[4].height = 26
+    _promo = {x['variant']: x for x in _D.get('promotion_review', [])}
+    r6 = 4
+    for _vk, _v in SHADOW_VARIANTS.items():
+        _st = _D.get('shadow_retro', {}).get(_vk, {})
+        r6 += 1
+        vals6 = [_v['label'], _D.get('shadow_today', {}).get(_vk, 0), _st.get('signals', 0),
+                 _st.get('wins', 0), _st.get('sl', 0), _st.get('time', 0), _st.get('open', 0),
+                 _st.get('win_rate', 0),
+                 (_promo.get(_vk, {}).get('verdict', 'baseline') if _vk != 'V0_current' else 'baseline')]
+        for c_i, val in enumerate(vals6, 1):
+            cell = ws6.cell(row=r6, column=c_i, value=val)
+            cell.font = font_body; cell.border = thin_border
+            cell.alignment = align_left if c_i == 1 else align_center
+            if c_i == 8: cell.number_format = '0.0"%"'
+            if c_i == 9:
+                if val == 'READY': cell.fill = fill_light_green; cell.font = font_green
+                elif val == 'NOT-READY': cell.fill = fill_light_red; cell.font = font_red
+    # reasons
+    r6 += 2
+    ws6.cell(row=r6, column=1, value="Phase-3 criteria check").font = font_header
+    ws6.cell(row=r6, column=1).fill = fill_slate
+    for _rv in _D.get('promotion_review', []):
+        r6 += 1
+        ws6.cell(row=r6, column=1, value=_rv['label']).font = font_bold
+        ws6.cell(row=r6, column=2, value=_rv['verdict']).font = font_bold
+        ws6.cell(row=r6, column=3, value=_rv['reasons']).font = font_body
+        ws6.cell(row=r6, column=3).alignment = Alignment(horizontal='left', vertical='center', wrap_text=True)
+        ws6.row_dimensions[r6].height = 22
+
+    # today's marginal shadow signals
+    r6 += 2
+    ws6.cell(row=r6, column=1, value="AAJ KE MARGINAL SHADOW SIGNALS (actionable NAHI)").font = font_header
+    ws6.cell(row=r6, column=1).fill = fill_slate
+    hdr6b = ["Variant", "Symbol", "Company", "CMP", "SL", "T1", "T2", "RSI", "BB slope %"]
+    r6 += 1
+    for c_i, h in enumerate(hdr6b, 1):
+        cell = ws6.cell(row=r6, column=c_i, value=h)
+        cell.font = font_header; cell.fill = fill_slate; cell.alignment = align_center; cell.border = thin_border
+    _marg = _D.get('shadow_today_signals', []) or []
+    if not _marg:
+        r6 += 1
+        ws6.merge_cells(start_row=r6, start_column=1, end_row=r6, end_column=len(hdr6b))
+        ws6.cell(row=r6, column=1, value="Aaj koi marginal shadow signal nahi (loosened filters bhi kuch nahi de rahe).").font = font_body
+    else:
+        for _s in _marg[:60]:
+            r6 += 1
+            row = [_s['variant'], _s['symbol'], _s['name'], _s['cmp'], _s['stop_loss'],
+                   _s['target_1'], _s['target_2'], _s['rsi'], _s.get('bb_slope_pct')]
+            for c_i, val in enumerate(row, 1):
+                cell = ws6.cell(row=r6, column=c_i, value=val)
+                cell.font = font_body; cell.border = thin_border
+                cell.alignment = align_left if c_i in (1, 3) else align_center
+                if c_i in (4, 5, 6, 7): cell.number_format = '₹#,##0.00'
+    for col_letter, w in zip("ABCDEFGHI", [34, 22, 22, 14, 12, 12, 12, 12, 48]):
+        ws6.column_dimensions[col_letter].width = w
+
     # Sheet 5: SOP
     ws5 = wb.create_sheet(title="Strategy Execution SOP")
     ws5.views.sheetView[0].showGridLines = True
@@ -825,6 +1292,11 @@ def export_to_excel(results, regime_info, universe_label="NSE Top 1000"):
                 val_str = str(cell.value or '')
                 if len(val_str) > max_len: max_len = len(val_str)
             ws.column_dimensions[col_letter].width = max(max_len + 4, 13)
+
+    try:
+        wb.move_sheet("Shadow (Loosened Filters)", offset=1)
+    except Exception:
+        pass
 
     filename = f"BMR_Trinity_NSE_Screener_Report_{now_ist().strftime('%Y%m%d_%H%M')}.xlsx"
     wb.save(filename)
@@ -858,6 +1330,24 @@ def build_html_report(results, regime_info, universe_label):
     date_str = generated_at.strftime("%A, %d %B %Y")
     # Jis waqt report actually bani, wahi India time dikhao (pehle "6:00 PM IST" hardcoded tha)
     sent_str = generated_at.strftime("%I:%M %p IST").lstrip("0")
+    _D = results.get('diagnostics') or {}
+    _asof = _D.get('data_as_of') or 'n/a'
+    _scanned = _D.get('tickers_scanned', 0)
+    _req = _D.get('tickers_requested', 0)
+    _rg = _D.get('reject_first_gate') or {}
+    _top_gate = next(iter(_rg.items())) if _rg else None
+
+    _why_zero = ""
+    if not actionable and _top_gate:
+        _why_zero = (f" &nbsp;•&nbsp; <b>0-signal reason:</b> {E(_top_gate[0])} blocked {_top_gate[1]} of "
+                     f"{sum(_rg.values())} uptrend stocks")
+    _sl = []
+    for _vk, _st in (_D.get('shadow_retro') or {}).items():
+        if _vk == 'V0_current':
+            continue
+        _sl.append(f"{E(_vk)}: {_D.get('shadow_today', {}).get(_vk, 0)} today / "
+                   f"{_st.get('signals', 0)} in 25d (win {_st.get('win_rate', 0):.0f}%)")
+    _shadow_line = " &nbsp;•&nbsp; ".join(_sl) if _sl else "no data"
 
     is_bull = regime_info.get('is_bull_market', False)
     regime_txt = "BULL MARKET" if is_bull else "CORRECTION"
@@ -968,7 +1458,7 @@ def build_html_report(results, regime_info, universe_label):
 <tr><td style="background-color:#111827;padding:28px 26px 20px 26px;border-left:1px solid #232C42;border-right:1px solid #232C42;">
   <div style="font-size:12px;letter-spacing:3px;color:#F0B90B;font-weight:bold;">● BMR TRINITY SWING SCREENER</div>
   <div style="font-size:28px;font-weight:800;color:#FFFFFF;margin:8px 0 4px 0;">Daily Action Report</div>
-  <div style="font-size:13px;color:#8A94A6;">{date_str} &nbsp;•&nbsp; {E(universe_label)} &nbsp;•&nbsp; {sent_str}</div>
+  <div style="font-size:13px;color:#8A94A6;">{date_str} &nbsp;•&nbsp; {E(universe_label)} &nbsp;•&nbsp; {sent_str} &nbsp;•&nbsp; Data: {E(_asof)}</div>
   <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:16px;"><tr>
     <td width="32%" align="center" style="background-color:{regime_bg};border:1px solid {regime_color};border-radius:8px;padding:10px;">
       <div style="font-size:10px;color:#8A94A6;letter-spacing:1px;">NIFTY REGIME</div>
@@ -1055,7 +1545,9 @@ def build_html_report(results, regime_info, universe_label):
   </tr>{wl_rows}</table>
 </td></tr>
 <tr><td style="background-color:#0D1220;padding:18px 26px;border:1px solid #232C42;border-radius:0 0 8px 8px;">
-  <div style="font-size:11px;color:#5A6579;line-height:1.6;">📎 Full Excel (5 sheets incl. Position Tracker) attached &nbsp;•&nbsp; 🚀 FULL-RIDE = T1 par sirf SL cost par, bechna kuch nahi &nbsp;•&nbsp; ⚡ FULL-EXIT = T1 par 100% book karo &nbsp;•&nbsp; 📌 Entry/SL/T1/T2 aaj ke close par based hain, kal ke open par thoda adjust ho sakte hain</div>
+  <div style="font-size:11px;color:#5A6579;line-height:1.6;">📎 Full Excel (6 sheets: signals, radar, position tracker, regime + data health, SOP, shadow test) attached &nbsp;•&nbsp; 🚀 FULL-RIDE = T1 par sirf SL cost par, bechna kuch nahi &nbsp;•&nbsp; ⚡ FULL-EXIT = T1 par 100% book karo &nbsp;•&nbsp; 📌 Entry/SL/T1/T2 aaj ke close par based hain, kal ke open par thoda adjust ho sakte hain</div>
+  <div style="font-size:11px;color:#5A6579;margin-top:8px;">🔎 Data health: <b>{_scanned}/{_req}</b> stocks scanned &nbsp;•&nbsp; as of <b>{E(_asof)}</b> &nbsp;•&nbsp; failed batches <b>{len(_D.get('batches_failed', []))}</b> &nbsp;•&nbsp; calc errors <b>{_D.get('tickers_calc_error', 0)}</b>{_why_zero}</div>
+  <div style="font-size:11px;color:#5A6579;margin-top:6px;">🧪 Shadow test (observation only, NOT actionable): {_shadow_line}</div>
   <div style="font-size:11px;color:#5A6579;margin-top:8px;">⚠️ Educational purpose only, investment advice nahi hai.</div>
 </td></tr>
 </table></td></tr></table></body></html>"""
@@ -1070,7 +1562,10 @@ with open("report.html", "w", encoding="utf-8") as f:
 print("[+] report.html saved")
 with open("results.json", "w", encoding="utf-8") as f:
     json.dump({"actionable": results.get("actionable", []), "watchlist": results.get("watchlist", []),
-               "recent": results.get("recent", []), "regime": regime_info}, f, indent=1, default=str)
+               "recent": results.get("recent", []), "regime": regime_info,
+               "diagnostics": results.get("diagnostics", {}),
+               "shadow_variants": {k: v['label'] for k, v in SHADOW_VARIANTS.items()}},
+              f, indent=1, default=str)
 print("[+] results.json saved")
 
 email_from = os.environ.get("MY_EMAIL")
