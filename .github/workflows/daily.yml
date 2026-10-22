@@ -48,6 +48,10 @@ jobs:
       # (extras NSE ke live list se aate hain, turnover se ranked).
       # Rollback chahiye to yahan 1000 kar dein - baaki kuch nahi badlega.
       BMR_UNIVERSE_SIZE: "1500"
+      # Yahoo 429 hardening (defaults main.py me hain, yahan sirf override ke liye):
+      #   BMR_YF_MAX_ATTEMPTS: "4"     # per download attempt
+      #   BMR_YF_BACKOFF_BASE: "5"     # 5s, 10s, 20s ... (cap BMR_YF_BACKOFF_CAP=60)
+      #   BMR_YF_CHUNK_DELAY: "1.5"    # do downloads ke beech gap (seconds)
 
     steps:
       - name: Aaj ka mail already gaya kya? (duplicate rokna)

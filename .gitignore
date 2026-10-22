@@ -1,0 +1,9 @@
+# Local run artifacts (workflow inhe artifact ke roop me upload karta hai, git me nahi)
+report.html
+results.json
+BMR_Trinity_NSE_Screener_Report_*.xlsx
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
