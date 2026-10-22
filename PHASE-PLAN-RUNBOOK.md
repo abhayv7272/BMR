@@ -123,3 +123,42 @@ CORRECTION regime:
 3. `Batches failed > 0` ya `Calculation errors > 0` → data issue, us din ke 0 ko "market" na samjhein.
 4. `latest_bar_nan_close > 0` aur `stale_tickers > 0` → screener kuch stocks ke liye kal ki candle par hai (Yahoo lag). Iska matlab signals thode miss ho sakte hain.
 5. 0 signal ho to **funnel** dekhein — top gate kaun hai. Wahi aapka asli "kya block ho raha hai" jawab hai.
+
+---
+
+## Universe change — TOP 1000 → TOP 1500 (23-Oct-2026)
+
+**Kya badla:** scan universe ab 1500 stocks ka hai (pehle 1000).
+
+Kahan se aate hain:
+| Layer | Count | Source |
+|---|---|---|
+| Base catalog | 998 unique (1000 rows, 2 dupes skipped) | embedded `EMBEDDED_DATA_B64` — **waisa hi, chhua nahi** (already turnover-ranked) |
+| Extras pool | ~1250 | NSE ka live `EQUITY_L.csv` (nseindia archives) — na mile to embedded `EXTRA_SYMBOLS_B64` fallback |
+| Extras selected | 502 | pool me se **average daily turnover (last ~10 sessions)** ke hisaab se top 502 |
+| **Total scanned** | **1500** | |
+
+Config: `BMR_UNIVERSE_SIZE` (default **1500**, workflow me set kiya hua hai).
+**Rollback:** workflow me `BMR_UNIVERSE_SIZE: "1000"` — baaki kuch nahi badlega.
+
+### Kya asar padta hai
+- **Run time:** +~3–5 min (13 turnover-rank chunks + 5 extra scan chunks). Python step ka timeout 25 → **30 min** kiya gaya.
+- **Signal count badh sakta hai** — 500 extra stocks scan hote hain, to radar/tracked/actionable ke numbers nikal sakte hain. Test (offline fake data): radar 65 → 105, tracked 9 → 14, actionable same.
+- **Aapke tracker ki logic bilkul same** — `TRACK_DAYS`, `simulate_exits`, `tracker_status` untouched. Sirf utne hi stocks track hote hain jitne scan hote hain.
+- Naya stock jispar turnover data nahi mila → wo **bottom par** (turnover 0), guess se include nahi hota.
+- Consistency ke liye base 1000 pehle, extras uske baad — dedupe automatic (`symbol` already in base → pool se hata diya jata hai).
+
+### Diagnostics me naye rows (Excel "Market Regime & Breadth" + console)
+```
+Universe target / Extras pool source / Extras pool size
+Extras ranked (turnover) / Extras with usable data / Rank batches failed / Universe note
+```
+`Universe note` me shortfall likha aata hai (e.g. "only 380 of 502 extras had usable turnover data").
+
+### Offline test results (fake deterministic Yahoo)
+```
+BMR_NSE_LIST_FILE=/tmp/EQUITY_L.csv  ->  base 998 + ranked 502 = 1500 ✅  scanned 1458
+NSE unreachable (fallback)           ->  base 998 + ranked 502 = 1500 ✅  scanned 1458
+BMR_UNIVERSE_SIZE=1000               ->  base 998 + ranked   2 = 1000 ✅  scanned 966
+```
+Teeno cases me workbook ka label sahi (`NSE TOP1500` / `NSE TOP1000`) aur 6 sheets intact.
