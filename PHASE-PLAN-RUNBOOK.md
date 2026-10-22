@@ -25,6 +25,7 @@
 - `except Exception:` per ticker → ab counter + 5 error samples (`tickers_calc_error`, `ticker_error_samples`)
 - batch download fail → pehle 100 stocks chupchaap gayab; ab `batches_failed` me batch number, stock count aur error
 - Yahoo ka NaN latest bar → pehle chupchaap drop hokar screener kal ki candle par chalta tha; ab detect + `stale_tickers` me naam ke saath report hota hai (selection waisi hi)
+- Yahoo 429 → yfinance exception nahi deta (khali frame deta hai), isliye purana retry use pakadta hi nahi tha; ab retry + `batches_failed` (P1, neeche detail)
 
 ### Regression proof (fake deterministic Yahoo, old vs new)
 
@@ -116,6 +117,33 @@ CORRECTION regime:
 
 ---
 
+## P1 — Yahoo 429 hardening ✅ (23-Oct-2026)
+
+Poora detail: **`P1-YF-429-HARDENING.md`**
+
+**Problem:** 429 (Too Many Requests) par yfinance exception nahi deta — wo khali
+DataFrame + `shared._ERRORS` me per-ticker error deta hai. Purana `yf_download_retry`
+sirf exception par retry karta tha, isliye 429 wale batch "OK" dikhte the
+(`Batches failed 0`) aur 100 stocks chupchaap scan se gayab ho jate the.
+
+**Fix:** retry ab exception + 429 signature + multi-ticker empty response teenon
+par. Backoff 5s → 10s → 20s (cap 60s), calls ke beech 1.5s gap, total 4 attempts.
+Partial data kabhi discard nahi hota; failed batch ab `batches_failed` +
+`tickers_missing_from_download` me ginta hai aur email me laal banner aata hai.
+
+**Regression (offline harness):**
+```
+python tools/offline_harness/regression.py --ref df26413 --salt 7
+  actionable 2/2 · watchlist 117/117 · recent 14/14   identical=True   PASS ✅
+python tools/offline_harness/regression.py --ref df26413
+  actionable 0/0 · watchlist 105/105 · recent 4/4     identical=True   PASS ✅
+```
+
+**Rollback:** `BMR_YF_MAX_ATTEMPTS=1` + `BMR_YF_CHUNK_DELAY=0` (deploy ke bina),
+ya commit revert.
+
+---
+
 ## Ye file kaise interpret karein (daily routine)
 
 1. Mail/Excel ka **"Data as of"** dekh lein — aaj ki date honi chahiye.
@@ -123,6 +151,11 @@ CORRECTION regime:
 3. `Batches failed > 0` ya `Calculation errors > 0` → data issue, us din ke 0 ko "market" na samjhein.
 4. `latest_bar_nan_close > 0` aur `stale_tickers > 0` → screener kuch stocks ke liye kal ki candle par hai (Yahoo lag). Iska matlab signals thode miss ho sakte hain.
 5. 0 signal ho to **funnel** dekhein — top gate kaun hai. Wahi aapka asli "kya block ho raha hai" jawab hai.
+6. `Yahoo retries / 429 hits` dekhein — 0/0 = Yahoo khush. >0 par bhi `gave up: 0` hona chahiye;
+   `gave up > 0` ka matlab us din kuch stocks scan se bahar the (report incomplete).
+7. Ek command me poora P2 checklist: `python tools/verify_run.py --artifact daily-report-<n>.zip`
+   (Data as of, benchmark lag, batches failed, calc errors, 429 gave-up, extras ranked).
+8. Fastest sanity check (network ke bina): `python tools/offline_harness/regression.py --ref <last-good-commit>`.
 
 ---
 

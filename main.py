@@ -190,6 +190,13 @@ def rank_candidates_by_turnover(cands, top_n, chunk_size=100, period="1mo", look
         chunk = tickers[i:i + chunk_size]
         try:
             data = yf_download_retry(chunk, period=period, group_by='ticker', progress=False)
+            # 429 par yfinance exception nahi deta, khali frame deta hai - isliye
+            # empty response bhi failed chunk hai (warna 100 stocks chupchaap
+            # turnover ranking se bahar ho jate hain aur universe chhota reh jata).
+            if data is None or getattr(data, 'empty', True):
+                stats['chunks_failed'].append(f"{i // chunk_size + 1}:empty response")
+                print(f"[!] Turnover rank batch {i // chunk_size + 1} empty response - skipped")
+                continue
             stats['chunks_ok'] += 1
         except Exception as exc:
             stats['chunks_failed'].append(f"{i // chunk_size + 1}:{str(exc)[:80]}")
@@ -425,17 +432,125 @@ def load_benchmark():
 
 # ============ SCREENER ENGINE ============
 
+# ---- P1: YAHOO 429 HARDENING ----
+# Ek run me Yahoo ko ~29 download calls jaate hain (1 benchmark + 15 scan +
+# 13 turnover). 429 (Too Many Requests) par yfinance EXCEPTION NAHI deta: wo
+# har ticker ka error `shared._ERRORS` me daal kar KHALI DataFrame return karta
+# hai. Purana wrapper sirf exception par retry karta tha, isliye 429 kabhi
+# pakda hi nahi jata tha - batch "OK" dikhta tha, `batches_failed` 0 hota tha,
+# aur 100 stocks chupchaap scan se gayab ho jate the (0-signal ka chhupa hua
+# karan). Ab retry teen wajahon par hota hai:
+#   1. exception (network/JSON error),
+#   2. rate-limit signature (`shared._ERRORS` me 429 / Too Many Requests),
+#   3. multi-ticker chunk ka khali result (Yahoo ne data hi nahi diya).
+# Backoff: 5s, 10s, 20s ... cap 60s. Calls ke beech 1.5s ka gap bhi rakhte hain
+# taaki 429 na aaye. Ye sirf DATA LAANE ka tarika hai - signal logic, gates,
+# thresholds aur tracker bilkul untouched hain.
+YF_MAX_ATTEMPTS = max(int(os.environ.get("BMR_YF_MAX_ATTEMPTS", "4")), 1)
+YF_BACKOFF_BASE = float(os.environ.get("BMR_YF_BACKOFF_BASE", "5"))
+YF_BACKOFF_CAP = float(os.environ.get("BMR_YF_BACKOFF_CAP", "60"))
+YF_CHUNK_DELAY = float(os.environ.get("BMR_YF_CHUNK_DELAY", "1.5"))
+YF_RATE_LIMIT_MARKERS = ("too many requests", "rate limit", "yfratelimiterror", "429")
+
+# Diagnostics (report me "YF retries / 429 hits" dikhate hain - chhupna nahi chahiye)
+YF_STATS = {
+    "calls": 0,          # logical downloads (chunk = 1 call)
+    "attempts": 0,       # actual yf.download invocations
+    "retries": 0,        # extra attempts after a failure
+    "rate_limit_hits": 0,  # 429 signatures dekhe gaye
+    "empty_results": 0,   # multi-ticker chunk ne khali frame diya
+    "gave_up": 0,         # attempts khatam hone par bhi data nahi mila
+    "sleep_seconds": 0.0,  # total backoff + throttle time
+    "last_reason": None,
+}
+_YF_LAST_CALL_TS = [0.0]
+
+
+def _yf_call_errors():
+    """Pichhle yf.download ke per-ticker errors -> (count, rate_limited?).
+
+    yfinance har call ke shuru me `shared._ERRORS` reset karta hai, isliye call
+    ke turant baad padhna usi call ka result deta hai."""
+    try:
+        from yfinance import shared as _yf_shared
+        errs = dict(getattr(_yf_shared, "_ERRORS", {}) or {})
+    except Exception:
+        return 0, False
+    limited = any(any(m in str(v).lower() for m in YF_RATE_LIMIT_MARKERS)
+                  for v in errs.values())
+    return len(errs), limited
+
+
+def _yf_throttle():
+    """Do downloads ke beech minimum gap (default 1.5s) - 429 se bachne ke liye."""
+    if YF_CHUNK_DELAY <= 0:
+        return
+    gap = time.time() - _YF_LAST_CALL_TS[0]
+    if gap < YF_CHUNK_DELAY:
+        wait = YF_CHUNK_DELAY - gap
+        time.sleep(wait)
+        YF_STATS["sleep_seconds"] += wait
+
+
 def yf_download_retry(*args, **kwargs):
-    """Retry wrapper for Yahoo Finance downloads (network hiccups). Same data, more reliable."""
+    """yf.download + 429/empty/exception par exponential backoff.
+
+    Data wahi rehta hai (sirf zyada koshish) - isliye signals nahi badalte.
+    Sab attempts fail ho to: agar koi attempt ne partial data diya tha to wahi
+    return hota hai, warna aakhri exception raise hota hai (purana behaviour)."""
+    _arg0 = args[0] if args else kwargs.get("tickers")
+    _multi = (not isinstance(_arg0, str)) and hasattr(_arg0, "__len__") and len(_arg0) > 1
+
+    YF_STATS["calls"] += 1
+    best = None          # koi bhi non-empty frame (partial data kabhi na khoyo)
     last_err = None
-    for attempt in range(3):
+    data = None
+    reason = None
+
+    for attempt in range(YF_MAX_ATTEMPTS):
+        _yf_throttle()
+        YF_STATS["attempts"] += 1
         try:
-            return yf.download(*args, **kwargs)
+            data = yf.download(*args, **kwargs)
         except Exception as e:
-            last_err = e
-            print(f"[!] Download attempt {attempt+1}/3 failed: {e}. Retrying in 10s...")
-            time.sleep(10)
-    raise last_err
+            last_err, data = e, None
+            reason = f"{type(e).__name__}: {str(e)[:120]}"
+        else:
+            last_err = None
+            n_err, limited = _yf_call_errors()
+            empty = data is None or getattr(data, "empty", True)
+            if not empty:
+                best = data
+            if limited:
+                reason = f"rate limit 429 ({n_err} ticker(s) failed)"
+                YF_STATS["rate_limit_hits"] += 1
+            elif empty and _multi:
+                reason = "empty response (no data returned)"
+                YF_STATS["empty_results"] += 1
+            else:
+                reason = None
+
+        _YF_LAST_CALL_TS[0] = time.time()
+        if reason is None:
+            return data
+
+        YF_STATS["last_reason"] = reason
+        if attempt + 1 >= YF_MAX_ATTEMPTS:
+            break
+        wait = min(YF_BACKOFF_BASE * (2 ** attempt), YF_BACKOFF_CAP)
+        YF_STATS["retries"] += 1
+        print(f"[!] Yahoo download failed ({reason}). "
+              f"Attempt {attempt + 1}/{YF_MAX_ATTEMPTS} - retrying in {wait:g}s...")
+        time.sleep(wait)
+        YF_STATS["sleep_seconds"] += wait
+
+    YF_STATS["gave_up"] += 1
+    if best is not None:
+        print(f"[!] Yahoo retries khatam ({reason}) - partial data use kar rahe hain.")
+        return best
+    if last_err is not None:
+        raise last_err
+    return data if data is not None else pd.DataFrame()
 
 import yfinance as yf
 import math
@@ -798,6 +913,17 @@ def run_screener(universe_df, capital=500000, risk_pct=1.0):
             # PHASE 1 fix: pehle ye batch chupchaap gayab ho jata tha (100 stocks
             # silently missing, run phir bhi green). Ab report me dikhta hai.
             diag['batches_failed'].append({'batch': c_i, 'stocks': len(chunk), 'error': str(e)[:200]})
+            # Poore batch ka data nahi aaya = ye tickers bhi "missing from download" hain
+            diag['tickers_missing_from_download'] += len(chunk)
+            continue
+        # P1: 429 ka asli symptom - exception nahi, khali DataFrame. Retries ke
+        # baad bhi khali hai to batch failed hai (yahi "Batches failed 0 par
+        # stocks missing" ka chhupa hua case tha).
+        if data is None or getattr(data, 'empty', True):
+            print(f"Error in batch {c_i}: empty response after {YF_MAX_ATTEMPTS} attempts")
+            diag['batches_failed'].append({'batch': c_i, 'stocks': len(chunk),
+                                           'error': f"empty response after {YF_MAX_ATTEMPTS} attempts (rate limited?)"})
+            diag['tickers_missing_from_download'] += len(chunk)
             continue
 
         for ticker in chunk:
@@ -1149,6 +1275,18 @@ def run_screener(universe_df, capital=500000, risk_pct=1.0):
     recent_signals.sort(key=lambda x: x['days_ago'])
 
     # ---- PHASE 1/2 diagnostics ko finalize karo ----
+    # P1: Yahoo download health (429 retries) - iske bina "0 signals" ka data-side
+    # karan report me chhupa reh jata tha.
+    diag['yf_max_attempts'] = YF_MAX_ATTEMPTS
+    diag['yf_chunk_delay'] = YF_CHUNK_DELAY
+    diag['yf_calls'] = YF_STATS['calls']
+    diag['yf_attempts'] = YF_STATS['attempts']
+    diag['yf_retries'] = YF_STATS['retries']
+    diag['yf_rate_limit_hits'] = YF_STATS['rate_limit_hits']
+    diag['yf_empty_results'] = YF_STATS['empty_results']
+    diag['yf_gave_up'] = YF_STATS['gave_up']
+    diag['yf_sleep_seconds'] = round(YF_STATS['sleep_seconds'], 1)
+    diag['yf_last_error'] = YF_STATS['last_reason']
     diag['data_as_of'] = str(diag['data_as_of']) if diag['data_as_of'] else None
     diag['market_date'] = str(diag['market_date']) if diag['market_date'] else None
     diag['generated_at_ist'] = now_ist().strftime('%d-%b-%Y %H:%M IST') if 'now_ist' in globals() else None
@@ -1224,6 +1362,13 @@ print(f"  Stale tickers (older candle)  : {_D.get('stale_tickers')} {_D.get('sta
 print(f"  Batches failed                : {len(_D.get('batches_failed', []))}")
 for _bf in _D.get('batches_failed', []):
     print(f"      - batch {_bf['batch']}: {_bf['stocks']} stocks lost -> {_bf['error']}")
+print(f"  Yahoo downloads (calls)       : {_D.get('yf_calls')}  (max attempts/call: {_D.get('yf_max_attempts')}, "
+      f"gap {_D.get('yf_chunk_delay')}s)")
+print(f"  Yahoo retries / 429 hits      : {_D.get('yf_retries')} / {_D.get('yf_rate_limit_hits')}"
+      f"   (empty results: {_D.get('yf_empty_results')}, gave up: {_D.get('yf_gave_up')}, "
+      f"backoff wait: {_D.get('yf_sleep_seconds')}s)")
+if _D.get('yf_gave_up'):
+    print(f"      - last issue: {_D.get('yf_last_error')}")
 if _D.get('ticker_error_samples'):
     print(f"  Error samples                 : {_D.get('ticker_error_samples')}")
 print(f"\n  Rejection funnel on latest bar (kaunsa gate block kar raha hai):")
@@ -1519,6 +1664,11 @@ def export_to_excel(results, regime_info, universe_label="NSE Top 1000"):
         ("Duplicate dates fixed", _D.get('tickers_duplicate_dates_fixed', 0), "Same timestamp do baar aaya tha"),
         ("Future-dated bars", _D.get('tickers_future_bar', 0), "Benchmark se aage ki candle (timezone/Yahoo issue)"),
         ("Batches failed", len(_bff), (f"{sum(b.get('stocks', 0) for b in _bff)} stocks lost" if _bff else "All download batches OK")),
+        ("Yahoo downloads (calls)", _D.get('yf_calls', 0), "Chunk = 1 call (benchmark + scan + turnover ranking)"),
+        ("Yahoo retries (backoff)", _D.get('yf_retries', 0), f"Exception / 429 / empty response par retry (max {_D.get('yf_max_attempts', 0)} attempts)"),
+        ("Yahoo 429 rate-limit hits", _D.get('yf_rate_limit_hits', 0), "Rate-limit signature mila - retry + 1.5s gap se recover"),
+        ("Yahoo gave up (no data)", _D.get('yf_gave_up', 0), "Attempts khatam - poora data nahi mila (partial mila to wahi use hua)"),
+        ("Yahoo backoff wait (s)", _D.get('yf_sleep_seconds', 0), "Retries me kitna time wait kiya (rate limit ko shaant hone ke liye)"),
         ("Duplicates skipped", ", ".join(_D.get('duplicates_skipped', [])) or "none", "Catalog me same symbol do baar tha"),
         ("Universe requested / unique", f"{_D.get('universe_requested', 0)} / {_D.get('universe_unique', 0)}", "Dupes hatane ke baad ka count"),
     ]
@@ -1740,6 +1890,11 @@ def build_html_report(results, regime_info, universe_label):
         _warn_bits.append(f"⚠ {_D.get('tickers_future_bar')} stocks ki candle expected session se aage hai (timezone/Yahoo issue).")
     if _D.get('intraday_bar_dropped', 0):
         _warn_bits.append(f"⚠ {_D.get('intraday_bar_dropped')} stocks ka adhoora intraday bar hataya gaya (report complete session par hai).")
+    if _D.get('yf_gave_up', 0) or _D.get('batches_failed'):
+        _n_out = max(_D.get('tickers_requested', 0) - _D.get('tickers_scanned', 0), 0)
+        _warn_bits.append(f"⚠ Yahoo ne {max(_D.get('yf_gave_up', 0), len(_D.get('batches_failed') or []))} download(s) me "
+                          f"data nahi diya (retries ke baad bhi; {_D.get('yf_rate_limit_hits', 0)} rate-limit hit) — "
+                          f"{_n_out} stocks scan se bahar rahe, report incomplete ho sakti hai.")
     if _D.get('tickers_bad_prices', 0) or _D.get('tickers_missing_columns', 0):
         _warn_bits.append(f"⚠ {_D.get('tickers_bad_prices', 0)} bad-price + {_D.get('tickers_missing_columns', 0)} missing-column tickers skip hue.")
     data_warning_html = ""
@@ -1941,7 +2096,7 @@ def build_html_report(results, regime_info, universe_label):
 </td></tr>
 <tr><td style="background-color:#0D1220;padding:18px 26px;border:1px solid #232C42;border-radius:0 0 8px 8px;">
   <div style="font-size:11px;color:#5A6579;line-height:1.6;">📎 Full Excel (6 sheets: signals, radar, position tracker, regime + data health, SOP, shadow test) attached &nbsp;•&nbsp; 🚀 FULL-RIDE = T1 par sirf SL cost par, bechna kuch nahi &nbsp;•&nbsp; ⚡ FULL-EXIT = T1 par 100% book karo &nbsp;•&nbsp; 📌 Entry/SL/T1/T2 aaj ke close par based hain, kal ke open par thoda adjust ho sakte hain</div>
-  <div style="font-size:11px;color:#5A6579;margin-top:8px;">🔎 Data health: <b>{_scanned}/{_req}</b> stocks scanned ({E(universe_label)}, extras pool: {_D.get('universe_ranked_extras', 0)} ranked / {_D.get('universe_pool_size', 0)}) &nbsp;•&nbsp; as of <b>{E(_asof)}</b> &nbsp;•&nbsp; failed batches <b>{len(_D.get('batches_failed', []))}</b> &nbsp;•&nbsp; calc errors <b>{_D.get('tickers_calc_error', 0)}</b>{_why_zero}</div>
+  <div style="font-size:11px;color:#5A6579;margin-top:8px;">🔎 Data health: <b>{_scanned}/{_req}</b> stocks scanned ({E(universe_label)}, extras pool: {_D.get('universe_ranked_extras', 0)} ranked / {_D.get('universe_pool_size', 0)}) &nbsp;•&nbsp; as of <b>{E(_asof)}</b> &nbsp;•&nbsp; failed batches <b>{len(_D.get('batches_failed', []))}</b> &nbsp;•&nbsp; calc errors <b>{_D.get('tickers_calc_error', 0)}</b> &nbsp;•&nbsp; YF retries <b>{_D.get('yf_retries', 0)}</b> (429 hits: {_D.get('yf_rate_limit_hits', 0)}){_why_zero}</div>
   <div style="font-size:11px;color:#5A6579;margin-top:6px;">🧪 Shadow test (observation only, NOT actionable): {_shadow_line}</div>
   <div style="font-size:11px;color:#5A6579;margin-top:8px;">⚠️ Educational purpose only, investment advice nahi hai.</div>
 </td></tr>
